@@ -1,26 +1,32 @@
+// jadwal_pelajaran_service.dart
+
 import '../models/jadwal_pelajaran_model.dart';
 import 'firestore_service.dart';
 
 class JadwalPelajaranService {
-  final FirestoreService _fs = FirestoreService();
-  static const String _col = 'jadwal_pelajaran';
-  static const List<String> hariList = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  static Future<Map<String, List<JadwalPelajaranModel>>> getJadwalGroupedByHari(String kelas) async {
+    List<JadwalPelajaranModel> semua = await FirestoreService.getJadwalByKelas(kelas);
+    Map<String, List<JadwalPelajaranModel>> grouped = {};
 
-  Stream<List<JadwalPelajaranModel>> streamJadwal(String kelas) {
-    return _fs.collection(_col).where('kelas', isEqualTo: kelas).snapshots().map((s) =>
-        s.docs.map((d) => JadwalPelajaranModel.fromMap(d.data() as Map<String, dynamic>)).toList());
+    for (String hari in daftarHari) {
+      grouped[hari] = semua.where((j) => j.hari == hari).toList()
+        ..sort((a, b) => a.jamMulai.compareTo(b.jamMulai));
+    }
+
+    return grouped;
   }
 
-  Future<List<JadwalPelajaranModel>> getJadwalByKelas(String kelas) async {
-    final s = await _fs.collection(_col).where('kelas', isEqualTo: kelas).get();
-    return s.docs.map((d) => JadwalPelajaranModel.fromMap(d.data() as Map<String, dynamic>)).toList();
+  static Future<List<String>> getDaftarKelas() async {
+    return ['Kelas SP', 'Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4'];
   }
 
-  Future<void> tambahJadwal(JadwalPelajaranModel j) async {
-    final id = _fs.generateId(_col);
-    await _fs.setDocument(_col, id, j.copyWith(id: id).toMap());
+  static String getHariIni() {
+    List<String> days = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Ahad'];
+    return days[DateTime.now().weekday - 1];
   }
 
-  Future<void> updateJadwal(JadwalPelajaranModel j) async => _fs.setDocument(_col, j.id, j.toMap());
-  Future<void> hapusJadwal(String id) async => _fs.deleteDocument(_col, id);
+  static Future<List<JadwalPelajaranModel>> getJadwalHariIni(String kelas) async {
+    String hari = getHariIni();
+    return FirestoreService.getJadwalByHari(kelas, hari);
+  }
 }

@@ -1,40 +1,30 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import '../config/app_colors.dart';
 
 class CustomTextField extends StatefulWidget {
   final String label;
-  final String? hint;
-  final TextEditingController? controller;
-  final bool obscureText;
+  final String hint;
+  final TextEditingController controller;
+  final bool isPassword;
+  final IconData? prefixIcon;
   final TextInputType keyboardType;
   final String? Function(String?)? validator;
-  final void Function(String)? onChanged;
-  final IconData? prefixIcon;
-  final Widget? suffixIcon;
   final bool readOnly;
+  final VoidCallback? onTap;
   final int maxLines;
-  final int? maxLength;
-  final List<TextInputFormatter>? inputFormatters;
-  final FocusNode? focusNode;
-  final bool enabled;
 
   const CustomTextField({
     super.key,
     required this.label,
-    this.hint,
-    this.controller,
-    this.obscureText = false,
+    required this.hint,
+    required this.controller,
+    this.isPassword = false,
+    this.prefixIcon,
     this.keyboardType = TextInputType.text,
     this.validator,
-    this.onChanged,
-    this.prefixIcon,
-    this.suffixIcon,
     this.readOnly = false,
+    this.onTap,
     this.maxLines = 1,
-    this.maxLength,
-    this.inputFormatters,
-    this.focusNode,
-    this.enabled = true,
   });
 
   @override
@@ -42,80 +32,121 @@ class CustomTextField extends StatefulWidget {
 }
 
 class _CustomTextFieldState extends State<CustomTextField> {
-  bool _obscure = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _obscure = widget.obscureText;
-  }
+  bool _obscureText = true;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           widget.label,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: theme.colorScheme.onSurface.withOpacity(0.8),
+            color: AppColors.textDark,
           ),
         ),
         const SizedBox(height: 6),
         TextFormField(
           controller: widget.controller,
-          focusNode: widget.focusNode,
-          obscureText: widget.obscureText ? _obscure : false,
+          obscureText: widget.isPassword && _obscureText,
           keyboardType: widget.keyboardType,
           validator: widget.validator,
-          onChanged: widget.onChanged,
           readOnly: widget.readOnly,
-          maxLines: widget.obscureText ? 1 : widget.maxLines,
-          maxLength: widget.maxLength,
-          inputFormatters: widget.inputFormatters,
-          enabled: widget.enabled,
-          style: const TextStyle(fontSize: 14),
+          onTap: widget.onTap,
+          maxLines: widget.isPassword ? 1 : widget.maxLines,
           decoration: InputDecoration(
             hintText: widget.hint,
-            hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13),
-            filled: true,
-            fillColor: widget.readOnly ? Colors.grey.shade100 : theme.colorScheme.surface,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             prefixIcon: widget.prefixIcon != null
-                ? Icon(widget.prefixIcon, color: theme.colorScheme.primary, size: 20)
+                ? Icon(widget.prefixIcon, color: AppColors.primary, size: 20)
                 : null,
-            suffixIcon: widget.obscureText
+            suffixIcon: widget.isPassword
                 ? IconButton(
                     icon: Icon(
-                      _obscure ? Icons.visibility_off : Icons.visibility,
-                      size: 20, color: Colors.grey,
+                      _obscureText ? Icons.visibility_off : Icons.visibility,
+                      color: Colors.grey.shade500,
+                      size: 20,
                     ),
-                    onPressed: () => setState(() => _obscure = !_obscure),
+                    onPressed: () => setState(() => _obscureText = !_obscureText),
                   )
-                : widget.suffixIcon,
+                : null,
+            filled: true,
+            fillColor: Colors.grey.shade50,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300),
+              borderSide: BorderSide(color: Colors.grey.shade200),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300),
+              borderSide: BorderSide(color: Colors.grey.shade200),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: theme.colorScheme.primary, width: 2),
+              borderSide: const BorderSide(color: AppColors.primary, width: 2),
             ),
             errorBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Colors.red),
+              borderSide: const BorderSide(color: AppColors.red),
             ),
-            focusedErrorBorder: OutlineInputBorder(
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// Dropdown widget
+class CustomDropdown extends StatelessWidget {
+  final String label;
+  final String? value;
+  final List<String> items;
+  final void Function(String?) onChanged;
+
+  const CustomDropdown({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.textDark,
+          ),
+        ),
+        const SizedBox(height: 6),
+        DropdownButtonFormField<String>(
+          value: value,
+          items: items.map((item) => DropdownMenuItem(value: item, child: Text(item))).toList(),
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Colors.grey.shade50,
+            border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
-              borderSide: const BorderSide(color: Colors.red, width: 2),
+              borderSide: BorderSide(color: Colors.grey.shade200),
             ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide(color: Colors.grey.shade200),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: const BorderSide(color: AppColors.primary, width: 2),
+            ),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           ),
         ),
       ],

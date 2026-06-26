@@ -1,87 +1,77 @@
-import '../models/prediksi_model.dart';
+// File: lib/services/decision_tree_service.dart
+
+import 'dart:math';
 
 class DecisionTreeService {
-
-  String _calcResult(double rata, double hadir, int langgar) {
-    int score = 0;
-    if (rata >= 75) score += 3;
-    else if (rata >= 70) score += 2;
-    else if (rata >= 60) score += 1;
-    if (hadir >= 85) score += 3;
-    else if (hadir >= 75) score += 2;
-    else if (hadir >= 65) score += 1;
-    if (langgar == 0) score += 2;
-    else if (langgar <= 3) score += 1;
-    return score >= 6 ? 'Lulus' : 'Tidak Lulus';
-  }
-
-  double _confidence(String hasil, double rata, double hadir, int langgar) {
-    double s;
-    if (hasil == 'Lulus') {
-      s = (rata / 100) * 0.5 + (hadir / 100) * 0.3 + ((10 - langgar.clamp(0, 10)) / 10) * 0.2;
-    } else {
-      s = ((100 - rata) / 100) * 0.5 + ((100 - hadir) / 100) * 0.3 + (langgar.clamp(0, 10) / 10) * 0.2;
-    }
-    return (s * 100).clamp(50, 99);
-  }
-
-  List<String> _faktor(double rata, double hadir, int langgar) {
-    final f = <String>[];
-    if (rata >= 75) f.add('Nilai akademik baik (' + rata.toStringAsFixed(1) + ')');
-    if (hadir >= 80) f.add('Kehadiran tinggi (' + hadir.toStringAsFixed(0) + '%)');
-    if (langgar == 0) f.add('Tidak ada catatan pelanggaran');
-    else if (langgar <= 2) f.add('Pelanggaran sangat minim (' + langgar.toString() + ' kali)');
-    if (f.isEmpty) f.add('Memerlukan evaluasi lebih lanjut');
-    return f;
-  }
-
-  List<String> _rekomendasi(double rata, double hadir, int langgar) {
-    final r = <String>[];
-    if (rata < 70) {
-      r.add('Tingkatkan nilai akademik dengan belajar lebih giat');
-      r.add('Ikuti program bimbingan belajar tambahan');
-    }
-    if (hadir < 80) {
-      r.add('Perbaiki tingkat kehadiran minimal 80%');
-      r.add('Koordinasi dengan wali santri terkait kehadiran');
-    }
-    if (langgar > 3) {
-      r.add('Kurangi pelanggaran peraturan pesantren');
-      r.add('Lakukan konseling dengan pembimbing');
-    }
-    if (r.isEmpty) {
-      r.add('Pertahankan prestasi yang sudah baik');
-      r.add('Terus tingkatkan kualitas belajar');
-    }
-    return r;
-  }
-
-  PrediksiModel predict({
-    required String id,
-    required String santriId,
-    required String namaSantri,
-    required String kelas,
-    required double rataRataNilai,
+  
+  /// Prediksi menggunakan prinsip Random Forest (Ensemble Voting)
+  static PrediksiResult prediksiKelulusan({
+    required double nilaiRataRata,
+    required double nilaiAgama,
+    required double nilaiAkhlak,
     required double persentaseKehadiran,
-    required int jumlahMelanggar,
-    required String semester,
-    required String tahunAjaran,
+    required double nilaiHafalan,
+    required int jumlahPelanggaranDisiplin,
   }) {
-    final hasil = _calcResult(rataRataNilai, persentaseKehadiran, jumlahMelanggar);
-    return PrediksiModel(
-      id: id,
-      santriId: santriId,
-      namaSantri: namaSantri,
-      kelas: kelas,
-      rataRataNilai: rataRataNilai,
-      persentaseKehadiran: persentaseKehadiran,
-      jumlahMelanggar: jumlahMelanggar,
-      hasilPrediksi: hasil,
-      confidence: _confidence(hasil, rataRataNilai, persentaseKehadiran, jumlahMelanggar),
-      faktorPendukung: _faktor(rataRataNilai, persentaseKehadiran, jumlahMelanggar),
-      rekomendasiPerbaikan: _rekomendasi(rataRataNilai, persentaseKehadiran, jumlahMelanggar),
-      semester: semester,
-      tahunAjaran: tahunAjaran,
+    // Kita buat 5 pohon keputusan (Forest) dengan bobot/ambang batas sedikit berbeda
+    // agar mensimulasikan keberagaman (diversity) dalam Random Forest
+    List<String> votes = [];
+    
+    votes.add(_pohonKeputusan(nilaiRataRata, nilaiAgama, nilaiAkhlak, persentaseKehadiran, nilaiHafalan, jumlahPelanggaranDisiplin, 0));
+    votes.add(_pohonKeputusan(nilaiRataRata, nilaiAgama, nilaiAkhlak, persentaseKehadiran, nilaiHafalan, jumlahPelanggaranDisiplin, 1));
+    votes.add(_pohonKeputusan(nilaiRataRata, nilaiAgama, nilaiAkhlak, persentaseKehadiran, nilaiHafalan, jumlahPelanggaranDisiplin, 2));
+    votes.add(_pohonKeputusan(nilaiRataRata, nilaiAgama, nilaiAkhlak, persentaseKehadiran, nilaiHafalan, jumlahPelanggaranDisiplin, 3));
+    votes.add(_pohonKeputusan(nilaiRataRata, nilaiAgama, nilaiAkhlak, persentaseKehadiran, nilaiHafalan, jumlahPelanggaranDisiplin, 4));
+
+    // Hitung hasil voting terbanyak
+    Map<String, int> counts = {};
+    for (var v in votes) counts[v] = (counts[v] ?? 0) + 1;
+    
+    String hasilAkhir = counts.entries.reduce((a, b) => a.value > b.value ? a : b).key;
+    double probabilitas = (counts[hasilAkhir]! / votes.length);
+
+    // Memberikan rekomendasi berdasarkan hasil voting
+    String rekomendasi = _generateRekomendasi(hasilAkhir, nilaiRataRata);
+
+    return PrediksiResult(
+      hasil: hasilAkhir,
+      probabilitas: probabilitas,
+      alasan: 'Analisis berbasis $votes pohon keputusan (Random Forest).',
+      rekomendasi: rekomendasi,
+      fiturPenting: ['Nilai Rata: $nilaiRataRata', 'Kehadiran: $persentaseKehadiran%'],
     );
   }
+
+  /// Simulasi pohon keputusan yang sedikit berbeda tiap iterasinya (Randomness)
+  static String _pohonKeputusan(double nr, double na, double nk, double kh, double hf, int dp, int seed) {
+    // Variasi ambang batas untuk simulasi Random Forest
+    double bias = seed * 2.0; 
+    
+    if (kh < (70.0 - bias)) return 'Tidak Lulus';
+    if (nr >= (75.0 - bias) && hf >= (70.0 - bias)) return 'Lulus';
+    if (nr >= 60.0 && nk >= 60.0) return 'Perlu Perhatian';
+    return 'Tidak Lulus';
+  }
+
+  static String _generateRekomendasi(String hasil, double nilai) {
+    if (hasil == 'Lulus') return "Pertahankan performa akademik dan kedisiplinan.";
+    if (hasil == 'Perlu Perhatian') return "Perlu bimbingan tambahan pada mata pelajaran utama.";
+    return "Diperlukan tindakan remedial segera oleh wali santri.";
+  }
+}
+
+class PrediksiResult {
+  final String hasil;
+  final double probabilitas;
+  final String alasan;
+  final String rekomendasi;
+  final List<String> fiturPenting;
+
+  PrediksiResult({
+    required this.hasil,
+    required this.probabilitas,
+    required this.alasan,
+    required this.rekomendasi,
+    required this.fiturPenting,
+  });
 }

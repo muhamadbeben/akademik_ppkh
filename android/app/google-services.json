@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "31183033401",
+    "project_id": "akademik-ppkh",
+    "storage_bucket": "akademik-ppkh.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:31183033401:android:5c065c4af5acfa313669e8",
+        "android_client_info": {
+          "package_name": "com.example.akademik_ppkh"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqQHqYwuEeRyM8-xqR2IgO2PXNepR6du8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:31183033401:android:4888fb0def6b9ba13669e8",
+        "android_client_info": {
+          "package_name": "e.akademik_ppkh"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAqQHqYwuEeRyM8-xqR2IgO2PXNepR6du8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

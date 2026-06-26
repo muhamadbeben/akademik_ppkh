@@ -1,25 +1,77 @@
+// File: lib/models/nilai_model.dart
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class NilaiModel {
-  final String id, santriId, mataPelajaran, semester, tahunAjaran, kelas;
-  final double nilaiHarian, nilaiUTS, nilaiUAS, nilaiAkhir;
+  final String id;
+  final String santriId;
+  final String kelas;
+  final String mataPelajaran;
+  final String semester;
+  final String tahunAjaran;
+  final double nilaiHarian;
+  final double nilaiAkhir;
   final DateTime createdAt;
 
-  NilaiModel({required this.id, required this.santriId, required this.mataPelajaran,
-    required this.nilaiHarian, required this.nilaiUTS, required this.nilaiUAS,
-    required this.semester, required this.tahunAjaran, required this.kelas, DateTime? createdAt})
-    : nilaiAkhir = (nilaiHarian * 0.3) + (nilaiUTS * 0.3) + (nilaiUAS * 0.4),
-      createdAt = createdAt ?? DateTime.now();
+  NilaiModel({
+    required this.id,
+    String? santriId, // Menggunakan opsional posisional/bernama agar fleksibel
+    String?
+        idSantri, // JALUR AMAN: Menampung jika ada kode lama/typo memanggil 'idSantri'
+    required this.kelas,
+    required this.mataPelajaran,
+    required this.semester,
+    required this.tahunAjaran,
+    required this.nilaiHarian,
+    required this.createdAt,
+  })  : santriId = idSantri ?? santriId ?? '',
+        nilaiAkhir = nilaiHarian;
 
-  String get grade { if (nilaiAkhir >= 90) return 'A'; if (nilaiAkhir >= 80) return 'B'; if (nilaiAkhir >= 70) return 'C'; if (nilaiAkhir >= 60) return 'D'; return 'E'; }
-  bool get lulus => nilaiAkhir >= 70;
+  /// Factory untuk mengubah data dari Firestore Map menjadi Objek NilaiModel
+  factory NilaiModel.fromMap(Map<String, dynamic> map, String documentId) {
+    // Fungsi pembantu aman untuk mengubah dynamic number ke double
+    double toDoubleSafe(dynamic value) {
+      if (value == null) return 0.0;
+      if (value is num) return value.toDouble();
+      return double.tryParse(value.toString()) ?? 0.0;
+    }
 
-  Map<String, dynamic> toMap() => {'id':id,'santriId':santriId,'mataPelajaran':mataPelajaran,
-    'nilaiHarian':nilaiHarian,'nilaiUTS':nilaiUTS,'nilaiUAS':nilaiUAS,'nilaiAkhir':nilaiAkhir,
-    'semester':semester,'tahunAjaran':tahunAjaran,'kelas':kelas,'createdAt':createdAt.toIso8601String()};
+    // Fungsi pembantu aman untuk membaca DateTime / Timestamp
+    DateTime toDateTimeSafe(dynamic value) {
+      if (value == null) return DateTime.now();
+      if (value is Timestamp) return value.toDate();
+      if (value is String) return DateTime.tryParse(value) ?? DateTime.now();
+      return DateTime.now();
+    }
 
-  factory NilaiModel.fromMap(Map<String, dynamic> map) => NilaiModel(
-    id: map['id']??'', santriId: map['santriId']??'', mataPelajaran: map['mataPelajaran']??'',
-    nilaiHarian: (map['nilaiHarian']??0).toDouble(), nilaiUTS: (map['nilaiUTS']??0).toDouble(),
-    nilaiUAS: (map['nilaiUAS']??0).toDouble(), semester: map['semester']??'',
-    tahunAjaran: map['tahunAjaran']??'', kelas: map['kelas']??'',
-    createdAt: DateTime.parse(map['createdAt']??DateTime.now().toIso8601String()));
+    return NilaiModel(
+      id: documentId,
+      santriId: map['id_santri'] ?? map['santriId'] ?? map['idSantri'] ?? '',
+      kelas: map['kelas'] ?? '',
+      mataPelajaran: map['mata_pelajaran'] ?? map['mataPelajaran'] ?? '',
+      semester: map['semester'] ?? '',
+      tahunAjaran: map['tahun_ajaran'] ?? map['tahunAjaran'] ?? '',
+      nilaiHarian: toDoubleSafe(map['nilai_harian'] ?? map['nilaiHarian']),
+      createdAt: toDateTimeSafe(map['createdAt']),
+    );
+  }
+
+  /// Mengubah objek NilaiModel menjadi Map sebelum disimpan ke Firestore
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id, // Menyimpan ID dokumen di dalam map data agar sinkron
+      'id_santri': santriId,
+      'santriId':
+          santriId, // Menyediakan camelCase juga untuk mencegah eror filter di Firestore
+      'kelas': kelas,
+      'mata_pelajaran': mataPelajaran,
+      'mataPelajaran': mataPelajaran,
+      'semester': semester,
+      'tahun_ajaran': tahunAjaran,
+      'tahunAjaran': tahunAjaran,
+      'nilai_harian': nilaiHarian,
+      'nilai_akhir': nilaiAkhir,
+      'createdAt': Timestamp.fromDate(createdAt),
+    };
+  }
 }
