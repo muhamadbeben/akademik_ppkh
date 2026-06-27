@@ -1,842 +1,452 @@
-// File: lib/screens/prediksi_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart';
-import '../models/santri_model.dart';
-import '../models/prediksi_model.dart';
-import '../services/firestore_service.dart';
-import '../services/random_forest_service.dart'; 
+import '../services/prediksi_service.dart'; // Sesuaikan dengan path service prediksi Anda
+import '../services/firestore_service.dart'; // Sesuaikan dengan path firestore Anda
+import '../models/santri_model.dart'; // Sesuaikan dengan path model santri Anda
 
 class PrediksiScreen extends StatefulWidget {
-  final String userRole;
-  final String? santriId;
-
-  const PrediksiScreen({
-    super.key,
-    required this.userRole,
-    this.santriId,
-  });
+  final String role; 
+  const PrediksiScreen({super.key, this.role = 'ustadz'}); 
 
   @override
-  State<PrediksiScreen> createState() => _PrediksiScreenState();
+  State<PrediksiScreen> createState() => _PrediksiScreenState(); 
 }
 
 class _PrediksiScreenState extends State<PrediksiScreen> {
+  final TextEditingController _hafalanController = TextEditingController();
+  final TextEditingController _kehadiranController = TextEditingController();
+  final TextEditingController _akademikController = TextEditingController();
+  final TextEditingController _perilakuController = TextEditingController();
+
+  String _hasilPrediksi = "";
+  bool _isLoading = false;
+  bool _isFetchingData = false;
+
+  bool get _isWaliSantri => widget.role == 'wali_santri';
+
   List<SantriModel> _allSantriList = [];
   List<SantriModel> _filteredSantriList = [];
-  bool _isLoading = true;
-  bool _isPredicting = false;
-  bool _isWaliMode = false;
-  SantriModel? _selectedSantri;
-
-  bool _analisisNilaiAkademik = true;
-  bool _analisisNilaiHafalan = true;
-
-  String _selectedSemester = 'Kelas 1';
-  String _selectedTahunAjaran = '2025/2026';
-
-  final List<String> _listSemester = const [
-    'Kelas sp',
-    'Kelas 1',
-    'Kelas 2',
-    'Kelas 3',
-    'Kelas 4'
-  ];
-
-  final List<String> _listTahunAjaran = const [
-    '2025/2026',
-    '2024/2025',
-    '2023/2024'
-  ];
-
-  final List<PrediksiModel> _riwayatPrediksi = [];
-  Map<String, dynamic>? _lastResult;
+  
+  final List<String> _kelasList = ['Kelas sp', 'Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4'];
+  String _selectedKelas = 'Kelas 4'; 
+  String _selectedSantriId = '';
+  final String _selectedTahunAjaran = '2025/2026'; 
+  String _namaSantriTerpilih = 'Pilih Nama Santri...';
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadDataSantri();
   }
 
-  Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+  Future<void> _loadDataSantri() async {
     try {
-      String role = widget.userRole.toLowerCase().trim();
-
-      if (role == 'walisantri' && widget.santriId != null && widget.santriId!.isNotEmpty) {
-        _isWaliMode = true;
-        SantriModel? anak = await FirestoreService.getSantriById(widget.santriId!);
-        if (anak != null) {
-          _allSantriList = [anak];
-          _filteredSantriList = [anak];
-          _selectedSantri = anak;
-          
-          String cleanedKelas = anak.kelas.toLowerCase().replaceAll('kls', 'kelas').trim();
-          _selectedSemester = _listSemester.firstWhere(
-            (k) => k.toLowerCase() == cleanedKelas, 
-            orElse: () => 'Kelas 1'
-          );
-        }
-      } else {
-        _isWaliMode = false;
-        _allSantriList = await FirestoreService.getSantriList();
-        _allSantriList = _allSantriList.where((s) => s.status.toLowerCase().contains('aktif')).toList();
-        
-        _prosesFilterSantriPerKelas();
-      }
-
-      await _loadHistoriPrediksiFirebase();
-      
-      if (_isWaliMode && _riwayatPrediksi.isEmpty && _selectedSantri != null) {
-        await _hitungPrediksiOtomatisUntukWali();
-      }
+      _allSantriList = await FirestoreService.getSantriList();
+      _allSantriList = _allSantriList.where((s) => s.status.toLowerCase().contains('aktif')).toList();
+      _filterSantriBerdasarkanKelas();
     } catch (e) {
-      debugPrint("Error loading data santri: $e");
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint("Gagal load data santri: $e");
     }
   }
 
-  void _prosesFilterSantriPerKelas() {
-    if (_isWaliMode) return;
-    
+  void _filterSantriBerdasarkanKelas() {
     setState(() {
       _filteredSantriList = _allSantriList.where((s) {
-        String dbKelas = s.kelas.toLowerCase().replaceAll('kls', 'kelas').trim();
-        String selectedClean = _selectedSemester.toLowerCase().trim();
-        return dbKelas == selectedClean || s.kelas == _selectedSemester;
+        return s.kelas.toLowerCase().trim() == _selectedKelas.toLowerCase().trim();
       }).toList();
-
       _filteredSantriList.sort((a, b) => a.nama.compareTo(b.nama));
-
-      if (_filteredSantriList.isNotEmpty) {
-        bool masihAda = _filteredSantriList.any((s) => s.id == _selectedSantri?.id);
-        if (!masihAda) {
-          _selectedSantri = _filteredSantriList.first;
-        }
-      } else {
-        _selectedSantri = null;
-      }
-      _lastResult = null;
+      
+      _selectedSantriId = '';
+      _namaSantriTerpilih = 'Pilih Nama Santri...';
+      _bersihkanForm();
     });
   }
 
-  Future<void> _loadHistoriPrediksiFirebase() async {
+  void _bersihkanForm() {
+    _hafalanController.clear();
+    _kehadiranController.clear();
+    _akademikController.clear();
+    _perilakuController.clear();
+    _hasilPrediksi = "";
+  }
+
+  Future<void> _tarikDataNilaiOtomatis() async {
+    if (_selectedSantriId.isEmpty) return;
+
+    setState(() {
+      _isFetchingData = true;
+      _hasilPrediksi = "";
+    });
+
     try {
-      Query<Map<String, dynamic>> query = FirebaseFirestore.instance.collection('prediksi');
+      String semester = _selectedKelas; 
+      String docId = "${_selectedSantriId}_${_selectedTahunAjaran.replaceAll('/', '-')}_${semester.replaceAll(' ', '')}";
+      
+      final docSnapshot = await FirebaseFirestore.instance.collection('nilai').doc(docId).get();
 
-      if (_isWaliMode) {
-        query = query.where('santriId', isEqualTo: widget.santriId);
-      } else {
-        query = query.where('kelas', isEqualTo: _selectedSemester);
-      }
+      if (!mounted) return;
 
-      final snapshot = await query.orderBy('tanggalPrediksi', descending: true).get();
+      if (docSnapshot.exists && docSnapshot.data() != null) {
+        Map<String, dynamic> data = docSnapshot.data()!;
+        
+        double kehadiran = double.tryParse(data['nilai_kehadiran']?.toString() ?? '0') ?? 0.0;
+        double perilaku = double.tryParse(data['nilai_perilaku']?.toString() ?? '0') ?? 0.0;
 
-      if (mounted) {
-        setState(() {
-          _riwayatPrediksi.clear();
-          if (snapshot.docs.isNotEmpty) {
-            _riwayatPrediksi.addAll(
-              snapshot.docs.map((doc) => PrediksiModel.fromMap(doc.data())).toList(),
-            );
-            
-            if (_isWaliMode && _riwayatPrediksi.isNotEmpty) {
-              final terbaru = _riwayatPrediksi.first;
-              _lastResult = {
-                'hasil': terbaru.hasilPrediksi,
-                'probabilitas': terbaru.probabilitas,
-                'rekomendasi': terbaru.catatan,
-              };
-            }
+        double totalUts = 0; int countUts = 0;
+        if (data['uts'] is Map) {
+          (data['uts'] as Map).forEach((_, v) { totalUts += double.tryParse(v.toString()) ?? 0; countUts++; });
+        }
+        double avgUts = countUts > 0 ? totalUts / countUts : 0.0;
+
+        double totalUas = 0; int countUas = 0;
+        if (data['uas'] is Map) {
+          (data['uas'] as Map).forEach((_, v) { totalUas += double.tryParse(v.toString()) ?? 0; countUas++; });
+        }
+        double avgUas = countUas > 0 ? totalUas / countUas : 0.0;
+        double nilaiAkademikGabungan = (avgUts + avgUas) / 2;
+
+        double totalHafalan = 0; int countHafalan = 0;
+        if (data['hafalan_kitab'] is Map) {
+          (data['hafalan_kitab'] as Map).forEach((_, v) { totalHafalan += double.tryParse(v.toString()) ?? 0; countHafalan++; });
+        }
+        double avgHafalan = countHafalan > 0 ? totalHafalan / countHafalan : 0.0;
+
+        _hafalanController.text = avgHafalan.toStringAsFixed(1);
+        _kehadiranController.text = kehadiran.toStringAsFixed(1);
+        _akademikController.text = nilaiAkademikGabungan.toStringAsFixed(1);
+        _perilakuController.text = perilaku.toStringAsFixed(1);
+
+        if (data['status_prediksi_ai'] != null) {
+          _hasilPrediksi = "Prediksi: ${data['status_prediksi_ai']}";
+        } else {
+          if (_isWaliSantri) {
+            _hasilPrediksi = "Belum ada hasil analisis dari Ustadz";
           }
-        });
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Data nilai berhasil ditarik!"), backgroundColor: Colors.green));
+      } else {
+        _bersihkanForm();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Belum ada data nilai tersimpan untuk santri ini."), backgroundColor: Colors.orange));
       }
     } catch (e) {
-      debugPrint("Error load histori prediksi: $e");
+      debugPrint("Error tarik nilai: $e");
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isFetchingData = false;
+        });
+      }
     }
   }
 
-  Future<void> _hitungPrediksiOtomatisUntukWali() async {
-    if (_selectedSantri == null) return;
-    await _kalkulasiPrediksiInti();
-  }
-
-  Future<void> _jalankanPrediksi() async {
-    if (_isWaliMode) return;
-
-    if (_selectedSantri == null) {
-      _showSnackBar('Silakan pilih nama santri terlebih dahulu.', Colors.orange);
+  Future<void> _prosesPrediksi() async {
+    if (_hafalanController.text.isEmpty ||
+        _kehadiranController.text.isEmpty ||
+        _akademikController.text.isEmpty ||
+        _perilakuController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Harap isi semua nilai!")),
+      );
       return;
     }
 
     setState(() {
-      _isPredicting = true;
-      _lastResult = null;
+      _isLoading = true;
+      _hasilPrediksi = "";
     });
 
-    await _kalkulasiPrediksiInti(simpanKeDatabase: true);
-  }
-
-  Future<void> _kalkulasiPrediksiInti({bool simpanKeDatabase = false}) async {
-    double calcAkademikTotal = 0.0;
-    int jumlahMapelAkademik = 0;
-    double calcHafalanTotal = 0.0;
-    int jumlahMapelHafalan = 0;
-    double nilaiKehadiran = 0.0;
-
     try {
-      String searchKelasAlias = _selectedSemester.replaceAll('Kelas', 'Kls').trim();
-      
-      final nilaiSnapshot = await FirebaseFirestore.instance
-          .collection('nilai')
-          .where('santriId', isEqualTo: _selectedSantri!.id)
-          .where('tahunAjaran', isEqualTo: _selectedTahunAjaran)
-          .get();
+      double hafalan = double.parse(_hafalanController.text);
+      double kehadiran = double.parse(_kehadiranController.text);
+      double akademik = double.parse(_akademikController.text);
+      double perilaku = double.parse(_perilakuController.text);
 
-      var docFilter = nilaiSnapshot.docs.where((doc) {
-        String dbSmt = doc.data()['semester'].toString().toLowerCase().trim();
-        return dbSmt == _selectedSemester.toLowerCase() || dbSmt == searchKelasAlias.toLowerCase();
-      }).toList();
-
-      if (docFilter.isNotEmpty) {
-        final data = docFilter.first.data();
-        nilaiKehadiran = double.tryParse(data['nilai_kehadiran']?.toString() ?? '0') ?? 0.0;
-        
-        if (data['uas'] is Map) {
-          (data['uas'] as Map).forEach((mapel, nilaiVal) {
-            double nilai = double.tryParse(nilaiVal.toString()) ?? 0.0;
-            calcAkademikTotal += nilai;
-            jumlahMapelAkademik++;
-          });
-        }
-        
-        if (data['hafalan_kitab'] is Map) {
-          (data['hafalan_kitab'] as Map).forEach((mapel, nilaiVal) {
-            double nilai = double.tryParse(nilaiVal.toString()) ?? 0.0;
-            calcHafalanTotal += nilai;
-            jumlahMapelHafalan++;
-          });
-        }
-      }
-
-      double rataRataAkademik = jumlahMapelAkademik == 0 ? 0.0 : calcAkademikTotal / jumlahMapelAkademik;
-      double rataRataHafalan = jumlahMapelHafalan == 0 ? 0.0 : calcHafalanTotal / jumlahMapelHafalan;
-      if (nilaiKehadiran == 0.0) nilaiKehadiran = 80.0; 
-
-      double inputAkademik = _analisisNilaiAkademik ? rataRataAkademik : 75.0;
-      double inputHafalan = _analisisNilaiHafalan ? rataRataHafalan : 70.0;
-
-      final resultResult = RandomForestService.predict(
-        nilaiRataRata: inputAkademik,
-        nilaiAgama: inputAkademik,
-        nilaiAkhlak: 85.0, 
-        persentaseKehadiran: nilaiKehadiran, 
-        nilaiHafalan: inputHafalan,
+      int hasilApi = await PrediksiApiService.getPrediksiKelulusan(
+        hafalanKitab: hafalan,
+        kehadiran: kehadiran,
+        nilaiAkademik: akademik,
+        nilaiPerilaku: perilaku,
       );
 
-      double predAkurasi = double.tryParse(resultResult['probabilitas']?.toString() ?? '') ?? 0.85;
-      
-      bool isLulusSyarat = (inputAkademik >= 70.0 && inputHafalan >= 65.0 && nilaiKehadiran >= 75.0);
-      String statusHasilAkhir;
-      String predCatatan;
+      String teksHasil = "";
+      bool isKelas4 = _selectedKelas.toLowerCase().trim() == 'kelas 4';
 
-      if (_selectedSemester == 'Kelas 4') {
-        if (isLulusSyarat) {
-          statusHasilAkhir = 'Lulus (Alumni)';
-          predCatatan = 'Selamat, santri telah memenuhi kriteria kelulusan pesantren dengan predikat akademik dan hafalan yang baik.';
-        } else {
-          statusHasilAkhir = 'Belum Lulus';
-          predCatatan = 'Santri belum memenuhi standar kelulusan. Perlu bimbingan intensif pada hafalan kitab dan ujian akhir.';
-        }
+      if (hasilApi == 0) {
+        teksHasil = isKelas4 ? "LULUS TEPAT WAKTU" : "NAIK KELAS";
       } else {
-        if (isLulusSyarat) {
-          statusHasilAkhir = 'Naik Kelas';
-          predCatatan = 'Performa stabil. Pertahankan nilai kehadiran dan tingkatkan kualitas hafalan kitab.';
-        } else {
-          statusHasilAkhir = 'Tinggal Kelas';
-          predCatatan = 'Performa di bawah standar kenaikan. Wajib mengikuti remedial akademik atau mengejar target setoran hafalan.';
-        }
+        teksHasil = isKelas4 ? "TIDAK LULUS" : "TINGGAL KELAS";
       }
 
-      if (simpanKeDatabase && !_isWaliMode) {
-        String docId = 'prediksi_${_selectedSantri!.id}_${DateTime.now().millisecondsSinceEpoch}';
-
-        final PrediksiModel modelPrediksiBaru = PrediksiModel(
-          id: docId,
-          santriId: _selectedSantri!.id,
-          namaSantri: _selectedSantri!.nama,
-          kelas: _selectedSemester,
-          nilaiRataRata: inputAkademik,
-          nilaiAgama: inputAkademik,
-          nilaiAkhlak: 85.0,
-          nilaiKehadiran: nilaiKehadiran,
-          nilaiHafalan: inputHafalan,
-          hasilPrediksi: statusHasilAkhir,
-          probabilitas: predAkurasi,
-          catatan: predCatatan,
-          tanggalPrediksi: DateTime.now(),
-        );
-
-        await FirebaseFirestore.instance
-            .collection('prediksi')
-            .doc(docId)
-            .set(modelPrediksiBaru.toMap());
-
-        setState(() {
-          _riwayatPrediksi.insert(0, modelPrediksiBaru);
-        });
-        _showSnackBar('Prediksi Kelulusan & Kenaikan AI Berhasil Diperbarui!', Colors.green);
+      if (_selectedSantriId.isNotEmpty) {
+        String semester = _selectedKelas; 
+        String docId = "${_selectedSantriId}_${_selectedTahunAjaran.replaceAll('/', '-')}_${semester.replaceAll(' ', '')}";
+        
+        await FirebaseFirestore.instance.collection('nilai').doc(docId).set({
+          'status_prediksi_ai': teksHasil,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
       }
+
+      if (!mounted) return;
 
       setState(() {
-        _lastResult = {
-          'hasil': statusHasilAkhir,
-          'probabilitas': predAkurasi,
-          'rekomendasi': predCatatan,
-        };
-        _isPredicting = false;
+        _hasilPrediksi = "Prediksi: $teksHasil";
       });
 
     } catch (e) {
-      if (!_isWaliMode) _showSnackBar('Gagal memproses data: $e', Colors.red);
-      debugPrint("Prediksi error: $e");
-      setState(() => _isPredicting = false);
-    }
-  }
-
-  void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: color, behavior: SnackBarBehavior.floating),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF1F5F9), 
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0.5,
-        shadowColor: Colors.black12,
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: Color(0xFF1E293B), size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          _isWaliMode ? 'Hasil Analisis Kelulusan' : 'Prediksi AI Pesantren',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF1E293B)),
-        ),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF5D38F5)))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildAIBannerHeader(),
-                  const SizedBox(height: 24),
-                  
-                  // Hanya Tampilkan Filter Lengkap Jika Bukan Wali
-                  if (!_isWaliMode) ...[
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: [BoxShadow(color: Colors.black.withAlpha(5), blurRadius: 10, offset: const Offset(0, 4))],
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Parameter Evaluasi', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A))),
-                          const SizedBox(height: 12),
-                          _buildPeriodeSelector(),
-                          const SizedBox(height: 16),
-                          const Text('Pilih Nama Santri', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Color(0xFF64748B))),
-                          const SizedBox(height: 6),
-                          _buildSantriDropdownSelector(),
-                          const SizedBox(height: 16),
-                          const Text('Komponen Utama', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Color(0xFF64748B))),
-                          const SizedBox(height: 6),
-                          _buildDataAnalysisCheckboxForm(),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    _buildTriggerButton(),
-                  ] else ...[
-                    // Tampilan Khusus Wali
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.indigo.shade100),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Identitas Santri', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Color(0xFF64748B))),
-                          const SizedBox(height: 6),
-                          _buildSantriDropdownSelector(),
-                        ],
-                      ),
-                    )
-                  ],
-
-                  const SizedBox(height: 32),
-                  _buildDynamicResultOrHistoryArea(),
-                  const SizedBox(height: 24),
-                  _buildInfoDisclaimerBanner(),
-                  const SizedBox(height: 50), // Ruang ekstra di bawah untuk scroll yang nyaman
-                ],
-              ),
-            ),
-    );
-  }
-
-  Widget _buildAIBannerHeader() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF4F46E5),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(color: const Color(0xFF4F46E5).withAlpha(60), blurRadius: 12, offset: const Offset(0, 6))
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  _isWaliMode ? 'Proyeksi Kelulusan\nOleh AI Pesantren' : 'Sistem Keputusan\nCerdas (Random Forest)',
-                  style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: Colors.white, height: 1.3),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _isWaliMode
-                      ? 'Memprediksi kenaikan kelas dan kelulusan anak berdasarkan nilai akademik, hafalan kitab, dan kehadiran.'
-                      : 'Menganalisis kelayakan naik kelas & kelulusan santri secara presisi berdasarkan standar kurikulum pondok.',
-                  style: TextStyle(fontSize: 12, color: Colors.indigo.shade100, height: 1.4),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          Container(
-            height: 60,
-            width: 60,
-            decoration: BoxDecoration(
-              color: Colors.white.withAlpha(40),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Icon(Icons.analytics_rounded, size: 32, color: Colors.white),
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSantriDropdownSelector() {
-    if (_isWaliMode) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.account_circle, size: 20, color: Color(0xFF4F46E5)),
-            const SizedBox(width: 12),
-            Text(
-              _selectedSantri?.nama ?? '-',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
-            ),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(color: const Color(0xFFE0E7FF), borderRadius: BorderRadius.circular(6)),
-              child: Text(
-                _selectedSemester,
-                style: const TextStyle(fontSize: 11, color: Color(0xFF4338CA), fontWeight: FontWeight.bold),
-              ),
-            )
-          ],
-        ),
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Terjadi kesalahan: $e")),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<SantriModel>(
-          value: _selectedSantri,
-          isExpanded: true,
-          hint: Text(_filteredSantriList.isEmpty ? 'Tidak ada santri di kelas ini' : 'Pilih nama santri', style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
-          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-          items: _filteredSantriList.map((s) {
-            return DropdownMenuItem(
-              value: s,
-              child: Row(
-                children: [
-                  const Icon(Icons.person, size: 18, color: Color(0xFF94A3B8)),
-                  const SizedBox(width: 10),
-                  Text(s.nama, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF1E293B))),
-                ],
-              ),
-            );
-          }).toList(),
-          onChanged: (s) => setState(() {
-            _selectedSantri = s;
-            _lastResult = null;
-          }),
-        ),
-      ),
-    );
   }
 
-  Widget _buildDataAnalysisCheckboxForm() {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        children: [
-          _buildCheckboxItem(
-            value: _analisisNilaiAkademik,
-            icon: Icons.menu_book_rounded,
-            title: 'Rata-rata Akademik (UAS)',
-            onChanged: (val) => setState(() => _analisisNilaiAkademik = val ?? true),
-          ),
-          const Divider(height: 1, indent: 45, color: Color(0xFFE2E8F0)),
-          _buildCheckboxItem(
-            value: _analisisNilaiHafalan,
-            icon: Icons.record_voice_over_rounded,
-            title: 'Hafalan Kitab Lisan',
-            onChanged: (val) => setState(() => _analisisNilaiHafalan = val ?? true),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildCheckboxItem({
-    required bool value,
-    required IconData icon,
-    required String title,
-    required ValueChanged<bool?> onChanged,
-  }) {
-    return CheckboxListTile(
-      value: value,
-      onChanged: onChanged,
-      activeColor: const Color(0xFF4F46E5),
-      checkboxShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-      secondary: Icon(icon, color: const Color(0xFF64748B), size: 18),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Color(0xFF334155))),
-      controlAffinity: ListTileControlAffinity.leading,
-    );
-  }
-
-  Widget _buildPeriodeSelector() {
-    return Row(
-      children: [
-        Expanded(
-          child: InkWell(
-            onTap: () => _showPicker('Pilih Kelas', _listSemester, (val) {
-              setState(() {
-                _selectedSemester = val;
-              });
-              _prosesFilterSantriPerKelas();
-              _loadHistoriPrediksiFirebase();
-            }),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Row(
-                children: [
-                  const Icon(Icons.school_rounded, size: 16, color: Color(0xFF64748B)),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(_selectedSemester, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155)))),
-                  const Icon(Icons.arrow_drop_down, size: 18, color: Color(0xFF64748B)),
-                ],
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: InkWell(
-            onTap: () => _showPicker('Tahun Ajaran', _listTahunAjaran, (val) {
-              setState(() {
-                _selectedTahunAjaran = val;
-              });
-              _prosesFilterSantriPerKelas();
-              _loadHistoriPrediksiFirebase();
-            }),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Row(
-                children: [
-                  const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFF64748B)),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(_selectedTahunAjaran, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF334155)))),
-                  const Icon(Icons.arrow_drop_down, size: 18, color: Color(0xFF64748B)),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTriggerButton() {
-    return SizedBox(
-      width: double.infinity,
-      height: 52,
-      child: ElevatedButton.icon(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF4F46E5),
-          foregroundColor: Colors.white,
-          elevation: 2,
-          shadowColor: const Color(0xFF4F46E5).withAlpha(100),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-        onPressed: _isPredicting || _selectedSantri == null ? null : _jalankanPrediksi,
-        icon: _isPredicting
-            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5))
-            : const Icon(Icons.data_exploration_rounded, size: 20),
-        label: Text(
-          _isPredicting ? 'Memproses Prediksi...' : 'Jalankan Analisis Keputusan',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildDynamicResultOrHistoryArea() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_lastResult != null) ...[
-          const Text('Hasil Keputusan AI Terkini', 
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: Color(0xFF0F172A))),
-          const SizedBox(height: 12),
-          _buildActiveResultCard(),
-          const SizedBox(height: 24),
-        ],
-        Text(_isWaliMode ? 'Riwayat Evaluasi Akademik Anak' : 'Arsip Hasil Prediksi',
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16, color: Color(0xFF0F172A))),
-          const SizedBox(height: 12),
-        _buildHistoryListCard(),
-      ],
-    );
-  }
-
-  Widget _buildActiveResultCard() {
-    String hasilText = _lastResult?['hasil']?.toString() ?? 'Naik Kelas';
-    double akurasi = double.tryParse(_lastResult?['probabilitas']?.toString() ?? '') ?? 0.85;
-    String rekomendasiText = _lastResult?['rekomendasi']?.toString() ?? '';
-
-    bool isBerhasil = hasilText.contains('Lulus') || hasilText.contains('Naik');
-    Color themeColor = isBerhasil ? const Color(0xFF10B981) : const Color(0xFFEF4444);
-    Color bgColor = isBerhasil ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2);
-    IconData iconStatus = isBerhasil ? Icons.verified_rounded : Icons.cancel_rounded;
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: themeColor.withAlpha(50)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(iconStatus, color: themeColor, size: 28),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Status Prediksi:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: themeColor)),
-                    Text(hasilText.toUpperCase(), style: TextStyle(fontWeight: FontWeight.w900, color: themeColor, fontSize: 18)),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: themeColor.withAlpha(40))),
-                child: Text(
-                  '${(akurasi * 100).toStringAsFixed(0)}% Akurat',
-                  style: TextStyle(color: themeColor, fontWeight: FontWeight.bold, fontSize: 11),
-                ),
-              )
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.white.withAlpha(150), borderRadius: BorderRadius.circular(8)),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(Icons.tips_and_updates_rounded, color: Colors.amber.shade700, size: 18),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(rekomendasiText, style: const TextStyle(fontSize: 12, color: Color(0xFF334155), height: 1.5, fontWeight: FontWeight.w500)),
-                ),
-              ],
-            ),
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHistoryListCard() {
-    if (_riwayatPrediksi.isEmpty) {
-      return Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(30),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFE2E8F0))),
-        child: Column(
-          children: [
-            Icon(Icons.folder_open_rounded, size: 48, color: Colors.grey.shade300),
-            const SizedBox(height: 16),
-            const Text('Belum Ada Riwayat', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF334155))),
-            const SizedBox(height: 6),
-            Text(
-              _isWaliMode ? 'Kalkulasi data akademik akan muncul setelah ujian selesai.' : 'Jalankan analisis AI untuk menyimpan riwayat prediksi santri.',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8), height: 1.4),
-            )
-          ],
-        ),
-      );
+  String _getCatatanSpesial() {
+    final kelasKecil = _selectedKelas.toLowerCase().trim();
+    if (kelasKecil == 'kelas sp' || kelasKecil == 'kelas 1' || kelasKecil == 'kelas 2' || kelasKecil == 'kelas 3') {
+      if (_hasilPrediksi.contains("NAIK KELAS")) {
+        return "Pertahankan Hafalan nya lebih giat lagi belajar";
+      } else if (_hasilPrediksi.contains("TINGGAL KELAS")) {
+        return "Lebih giat lagi belajar dan menghafal nya";
+      }
     }
+    return "";
+  }
 
-    return ListView.separated(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: _riwayatPrediksi.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (ctx, index) {
-        final hist = _riwayatPrediksi[index];
-        bool checkLulus = hist.hasilPrediksi.contains('Lulus') || hist.hasilPrediksi.contains('Naik');
-        Color statusColor = checkLulus ? const Color(0xFF10B981) : const Color(0xFFEF4444);
-
+  void _showSantriPicker() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
         return Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-            boxShadow: [BoxShadow(color: Colors.black.withAlpha(5), blurRadius: 4, offset: const Offset(0, 2))],
-          ),
-          child: ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            leading: Container(
-              height: 40, width: 40,
-              decoration: BoxDecoration(color: statusColor.withAlpha(20), borderRadius: BorderRadius.circular(10)),
-              child: Icon(checkLulus ? Icons.school_rounded : Icons.warning_rounded, color: statusColor, size: 20),
-            ),
-            title: Text(hist.namaSantri, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Color(0xFF1E293B))),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: Text(DateFormat('dd MMM yyyy').format(hist.tanggalPrediksi), style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
-            ),
-            trailing: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(20)),
-              child: Text(hist.hasilPrediksi, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10, color: Colors.white)),
-            ),
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Pilih Santri', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Expanded(
+                child: _filteredSantriList.isEmpty
+                    ? const Center(child: Text('Tidak ada santri di kelas ini'))
+                    : ListView.builder(
+                        itemCount: _filteredSantriList.length,
+                        itemBuilder: (context, idx) {
+                          final santri = _filteredSantriList[idx];
+                          return ListTile(
+                            leading: CircleAvatar(backgroundColor: Colors.blue[50], child: const Icon(Icons.person, color: Colors.blue)),
+                            title: Text(santri.nama, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            onTap: () {
+                              final navigator = Navigator.of(context);
+                              setState(() {
+                                _selectedSantriId = santri.id;
+                                _namaSantriTerpilih = santri.nama;
+                              });
+                              navigator.pop();
+                              _tarikDataNilaiOtomatis(); 
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ],
           ),
         );
       },
     );
   }
 
-  Widget _buildInfoDisclaimerBanner() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E8F0))),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.lightbulb_outline_rounded, color: Color(0xFF64748B), size: 20),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('Catatan Sistem', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Color(0xFF334155))),
-                const SizedBox(height: 6),
-                Text(
-                  'Sistem klasifikasi AI Random Forest membaca data dari Rata-rata UAS, Hafalan Kitab, dan Kehadiran untuk memprediksi kelulusan atau kenaikan kelas santri secara otomatis.',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600, height: 1.5),
-                ),
-              ],
-            ),
-          )
-        ],
+  Widget _buildCustomTextField(String label, TextEditingController controller, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: TextField(
+        controller: controller,
+        readOnly: true, 
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: Colors.grey[600]),
+          prefixIcon: Icon(icon, color: Colors.blue[900]),
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade200)),
+          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.blue.shade900, width: 2)),
+          contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+        ),
       ),
     );
   }
 
-  void _showPicker(String title, List<String> items, Function(String) onSelect) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) => Container(
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.45),
+  @override
+  Widget build(BuildContext context) {
+    final catatanSpesial = _getCatatanSpesial();
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFFAFAFC), 
+      appBar: AppBar(
+        title: Text(_isWaliSantri ? 'Hasil Prediksi Santri' : 'Analisis Prediksi AI', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
+        backgroundColor: Colors.blue[900], 
+        elevation: 0,
+        centerTitle: true,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20.0),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 16),
-            Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(4)))),
-            const SizedBox(height: 16),
-            Center(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF1E293B)))),
-            const SizedBox(height: 10),
-            Expanded(
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: items.length,
-                itemBuilder: (context, idx) {
-                  final item = items[idx];
-                  return ListTile(
-                    title: Text(item, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: Color(0xFF475569))),
-                    onTap: () {
-                      onSelect(item);
-                      Navigator.pop(context);
-                    },
-                  );
-                },
+            if (!_isWaliSantri) ...[
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200), boxShadow: [BoxShadow(color: Colors.grey.withAlpha(20), blurRadius: 10, offset: const Offset(0, 5))]),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.manage_search_rounded, color: Colors.blue[900]),
+                        const SizedBox(width: 8),
+                        const Text("Tarik Data Santri", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    const Divider(height: 24),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(color: const Color(0xFFFAFAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          isExpanded: true,
+                          value: _selectedKelas,
+                          items: _kelasList.map((k) => DropdownMenuItem(value: k, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w600)))).toList(),
+                          onChanged: (val) {
+                            if (val != null) {
+                              setState(() => _selectedKelas = val);
+                              _filterSantriBerdasarkanKelas();
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: _showSantriPicker,
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(color: const Color(0xFFFAFAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(_namaSantriTerpilih, style: TextStyle(fontWeight: FontWeight.w600, color: _selectedSantriId.isEmpty ? Colors.grey : Colors.black)),
+                            _isFetchingData 
+                                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)) 
+                                : const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 10),
+              const SizedBox(height: 24),
+              const Text("Parameter Penilaian (Otomatis)", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
+              const SizedBox(height: 12),
+              _buildCustomTextField('Nilai Rata-Rata Hafalan Kitab', _hafalanController, Icons.menu_book_rounded),
+              _buildCustomTextField('Persentase Kehadiran (%)', _kehadiranController, Icons.co_present_rounded),
+              _buildCustomTextField('Nilai Rata-rata Academic', _akademikController, Icons.school_rounded),
+              _buildCustomTextField('Nilai Perilaku / Akhlak', _perilakuController, Icons.emoji_emotions_rounded),
+              const SizedBox(height: 8),
+              ElevatedButton(
+                onPressed: _isLoading ? null : _prosesPrediksi,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 18),
+                  backgroundColor: Colors.blue[900],
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  elevation: 2,
+                ),
+                child: _isLoading
+                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : const Text('Jalankan Analisis AI', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+              ),
+              const SizedBox(height: 24),
+            ],
+
+            if (_isWaliSantri && _hasilPrediksi.isEmpty)
+              Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+                child: const Center(
+                  child: Text("Belum ada data hasil analisis yang dirilis oleh Ustadz.", style: TextStyle(fontWeight: FontWeight.w500, color: Colors.grey)),
+                ),
+              ),
+            
+            if (_hasilPrediksi.isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") 
+                        ? [Colors.red.shade50, Colors.red.shade100]
+                        : [Colors.green.shade50, Colors.green.shade100],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") ? Colors.red.shade200 : Colors.green.shade200,
+                    width: 2,
+                  ),
+                  boxShadow: [BoxShadow(color: Colors.grey.withAlpha(20), blurRadius: 10, offset: const Offset(0, 5))],
+                ),
+                child: Column(
+                  children: [
+                    Icon(
+                      _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") ? Icons.cancel_rounded : Icons.check_circle_rounded,
+                      size: 40,
+                      color: _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") ? Colors.red[700] : Colors.green[700],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _hasilPrediksi,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") ? Colors.red[800] : Colors.green[800],
+                      ),
+                    ),
+                    
+                    if (catatanSpesial.isNotEmpty) ...[
+  // Tambahkan const di depan Padding untuk menghilangkan warning linter
+  const Padding( 
+    padding: EdgeInsets.symmetric(horizontal: 20.0),
+    child: Divider(color: Colors.black26, height: 20), 
+  ),
+  Text(
+    catatanSpesial,
+    textAlign: TextAlign.center,
+    style: TextStyle(
+      fontSize: 14,
+      fontWeight: FontWeight.w600,
+      fontStyle: FontStyle.italic,
+      color: _hasilPrediksi.contains("TINGGAL") ? Colors.red.shade900 : Colors.green.shade900,
+    ),
+  ),
+],
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 40),
           ],
         ),
       ),

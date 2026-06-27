@@ -2,15 +2,23 @@
 
 import 'dart:io';
 import 'dart:typed_data'; 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:path_provider/path_provider.dart';
-import 'package:open_file/open_file.dart';
-import 'package:share_plus/share_plus.dart'; 
-import 'package:printing/printing.dart'; // IMPORT PACKAGE PRINTING
+import 'package:printing/printing.dart'; 
 import '../models/rapor_model.dart';
 
 class RaporPdfService {
+  // Fungsi pembantu untuk mendeteksi apakah mata pelajaran termasuk kategori hafalan
+  bool _isKategoriHafalan(String namaMapel) {
+    final nama = namaMapel.toLowerCase();
+    return nama.contains('hafalan') || 
+           nama.contains('tahfidz') || 
+           nama.contains('tahfizh') || 
+           nama.contains('ziyadah');
+  }
+
   // Fungsi logika Predikat (A-E)
   Map<String, String> _getPredikatInfo(double n) {
     if (n >= 90) return {'grade': 'A', 'ket': 'Sangat Baik'};
@@ -20,14 +28,10 @@ class RaporPdfService {
     return {'grade': 'E', 'ket': 'Sangat Kurang'};
   }
 
-  // Logika Kenaikan Kelas (Aman dari List Kosong)
-  String _cekStatusKenaikan(List<dynamic> daftarNilai) {
+  // Logika Kenaikan Kelas
+  String _cekStatusKenaikan(List<NilaiModel> daftarNilai) {
     if (daftarNilai.isEmpty) return 'BELUM TERSEDIA (NILAI KOSONG)';
-
-    int jumlahBawahKKM = 0;
-    for (var n in daftarNilai) {
-      if (n.nilaiHarian < 70) jumlahBawahKKM++;
-    }
+    final jumlahBawahKKM = daftarNilai.where((n) => n.nilaiHarian < 70).length;
     return jumlahBawahKKM > 2 ? 'TIDAK NAIK KELAS' : 'NAIK KELAS';
   }
 
@@ -39,61 +43,74 @@ class RaporPdfService {
         .replaceAll('  ', ' ');            
   }
 
-  // =========================================================================
-  // FUNGSI BARU: Memformat Nama Kelas (Menghapus pengulangan kata "Kelas")
-  // =========================================================================
+  // Memformat Nama Kelas
   String _formatNamaKelas(String kelasAsli) {
-    String teksFormat = kelasAsli.toLowerCase().trim();
-    
-    // Jika kelas SP, ubah menjadi Santri Pemula (SP)
+    final teksFormat = kelasAsli.toLowerCase().trim();
     if (teksFormat == 'kelas sp' || teksFormat == 'sp') {
       return 'Santri Pemula (SP)';
     }
-    
-    // Untuk kelas angka, hapus kata "Kelas" sehingga sisa angkanya saja (1, 2, 3, 4)
-    return kelasAsli.replaceAll(RegExp(r'(?i)kelas\s*'), '').trim();
+    return kelasAsli.replaceAll(RegExp(r'kelas\s*', caseSensitive: false), '').trim();
   }
 
   // Men-generate dan membuka file PDF Rapor
   Future<void> generateAndOpenRapor(RaporModel rapor, Uint8List? logoBytes) async {
     final pdf = pw.Document();
+    final statusKenaikan = _cekStatusKenaikan(rapor.daftarNilai);
+    
+    // PROSES FILTERING: Memisahkan list dari model asli berdasarkan nama mata pelajaran
+    final listAkademik = rapor.daftarNilai.where((n) => !_isKategoriHafalan(n.mataPelajaran)).toList();
+    final listHafalan = rapor.daftarNilai.where((n) => _isKategoriHafalan(n.mataPelajaran)).toList();
 
-    // Status kenaikan
-    String statusKenaikan = _cekStatusKenaikan(rapor.daftarNilai);
-
-    // Menyiapkan data tabel secara dinamis
-    List<List<String>> tableData = [];
-
-    if (rapor.daftarNilai.isEmpty) {
-      tableData.add([
-        '-',
-        'Belum ada data nilai / Nilai belum di-input guru',
-        '-',
-        '-',
-        '-'
-      ]);
-      tableData.add(['', 'RATA-RATA NILAI', '-', '', '']);
+    // -------------------------------------------------------------------------
+    // 1. DATA TABEL A: AKADEMIK (UMUM)
+    // -------------------------------------------------------------------------
+    final List<List<String>> tableAkademikData = [];
+    if (listAkademik.isEmpty) {
+      tableAkademikData.add(['-', 'Belum ada data nilai akademik umum', '-', '-', '-']);
+      tableAkademikData.add(['', 'RATA-RATA NILAI', '-', '', '']);
     } else {
-      tableData.addAll(rapor.daftarNilai.map((n) {
+      final barisNilai = listAkademik.asMap().entries.map((entry) {
+        final index = entry.key + 1;
+        final n = entry.value;
         final info = _getPredikatInfo(n.nilaiHarian);
         return [
-          (rapor.daftarNilai.indexOf(n) + 1).toString(),
+          index.toString(),
           _sanitizeText(n.mataPelajaran), 
           n.nilaiHarian.toStringAsFixed(0),
           info['grade']!,
           info['ket']!
         ];
-      }).toList());
+      }).toList();
 
-      tableData.add([
-        '',
-        'RATA-RATA NILAI',
-        rapor.nilaiRataRata.toStringAsFixed(1),
-        '',
-        ''
-      ]);
+      tableAkademikData.addAll(barisNilai);
+      tableAkademikData.add(['', 'RATA-RATA NILAI', rapor.nilaiRataRata.toStringAsFixed(1), '', '']);
     }
 
+    // -------------------------------------------------------------------------
+    // 2. DATA TABEL C: HAFALAN / TAHFIDZ
+    // -------------------------------------------------------------------------
+    final List<List<String>> tableHafalanData = [];
+    if (listHafalan.isEmpty) {
+      tableHafalanData.add(['-', 'Belum ada data nilai hafalan / tahfidz', '-', '-', '-']);
+    } else {
+      final barisHafalan = listHafalan.asMap().entries.map((entry) {
+        final index = entry.key + 1;
+        final h = entry.value;
+        final info = _getPredikatInfo(h.nilaiHarian); 
+        return [
+          index.toString(),
+          _sanitizeText(h.mataPelajaran), 
+          h.nilaiHarian.toStringAsFixed(0),
+          info['grade']!,
+          info['ket']!
+        ];
+      }).toList();
+      tableHafalanData.addAll(barisHafalan);
+    }
+
+    // -------------------------------------------------------------------------
+    // DESAIN LAYOUT PDF A4
+    // -------------------------------------------------------------------------
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -118,20 +135,11 @@ class RaporPdfService {
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     mainAxisSize: pw.MainAxisSize.min,
                     children: [
-                      pw.Text(
-                        'PONDOK PESANTREN KHOIRUL HUDA',
-                        style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
-                      ),
+                      pw.Text('PONDOK PESANTREN KHOIRUL HUDA', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
                       pw.SizedBox(height: 2),
-                      pw.Text(
-                        'YAYASAN PENDIDIKAN ISLAM NURUL IMAN',
-                        style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
-                      ),
+                      pw.Text('YAYASAN PENDIDIKAN ISLAM NURUL IMAN', style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
                       pw.SizedBox(height: 2),
-                      pw.Text(
-                        'Kp. Baru Desa Pangarengan, Kecamatan Rajeg, Kabupaten Tangerang',
-                        style: const pw.TextStyle(fontSize: 8.5),
-                      ),
+                      pw.Text('Kp. Baru Desa Pangarengan, Kecamatan Rajeg, Kabupaten Tangerang', style: const pw.TextStyle(fontSize: 8.5)),
                     ],
                   ),
                 ],
@@ -153,7 +161,6 @@ class RaporPdfService {
                   pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.start,
                     children: [
-                      // PERBAIKAN: Memanggil _formatNamaKelas untuk merapikan teksnya
                       _infoText('Kelas', _formatNamaKelas(rapor.kelas)),
                       _infoText('Tahun Pelajaran', rapor.tahunAjaran),
                     ],
@@ -162,9 +169,8 @@ class RaporPdfService {
               ),
               pw.SizedBox(height: 15),
 
-              // --- TABEL NILAI UTAMA ---
-              pw.Text('A. Nilai Akademik', 
-                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+              // --- BAGIAN A: NILAI AKADEMIK ---
+              pw.Text('A. Nilai Akademik', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
               pw.SizedBox(height: 5),
               pw.TableHelper.fromTextArray(
                 border: pw.TableBorder.all(),
@@ -179,81 +185,79 @@ class RaporPdfService {
                   3: const pw.FixedColumnWidth(50),
                   4: const pw.FlexColumnWidth(2),
                 },
-                data: tableData,
+                data: tableAkademikData,
               ),
-
               pw.SizedBox(height: 15),
 
-              // --- TABEL SIKAP & KEHADIRAN ---
+              // --- BAGIAN B: NILAI PERILAKU / ADAB & KEHADIRAN (DIGABUNG BERDAMPINGAN) ---
+              pw.Text('B. Nilai Perilaku / Adab & Kehadiran', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+              pw.SizedBox(height: 5),
               pw.Row(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
+                  // Sub-Tabel Kotak Adab & Perilaku
                   pw.Expanded(
                     flex: 5,
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text('B. Nilai Perilaku / Adab', 
-                            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                        pw.SizedBox(height: 5),
-                        pw.TableHelper.fromTextArray(
-                          border: pw.TableBorder.all(),
-                          headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                          headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
-                          cellStyle: const pw.TextStyle(fontSize: 9),
-                          headers: ['Aspek Penilaian', 'Catatan / Keterangan'],
-                          columnWidths: {
-                            0: const pw.FixedColumnWidth(90),
-                            1: const pw.FlexColumnWidth(),
-                          },
-                          data: [
-                            ['Adab & Perilaku', _sanitizeText(rapor.catatanAdab)],
-                          ],
-                        ),
-                      ],
+                    child: pw.TableHelper.fromTextArray(
+                      border: pw.TableBorder.all(),
+                      headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                      headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
+                      cellStyle: const pw.TextStyle(fontSize: 9),
+                      headers: ['Aspek Penilaian', 'Catatan / Keterangan'],
+                      columnWidths: {0: const pw.FixedColumnWidth(90), 1: const pw.FlexColumnWidth()},
+                      data: [['Adab & Perilaku', _sanitizeText(rapor.catatanAdab)]],
                     ),
                   ),
                   pw.SizedBox(width: 15),
+                  // Sub-Tabel Kotak Kehadiran (Absensi)
                   pw.Expanded(
                     flex: 4,
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.start,
-                      children: [
-                        pw.Text('C. Ketidakhadiran', 
-                            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
-                        pw.SizedBox(height: 5),
-                        pw.TableHelper.fromTextArray(
-                          border: pw.TableBorder.all(),
-                          headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
-                          headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
-                          cellStyle: const pw.TextStyle(fontSize: 9),
-                          headers: ['Alasan Absensi', 'Jumlah'],
-                          data: [
-                            ['1. Sakit', '${rapor.absenSakit} Hari'],
-                            ['2. Izin', '${rapor.absenIzin} Hari'],
-                            ['3. Tanpa Keterangan', '${rapor.absenAlpha} Hari'],
-                          ],
-                        ),
+                    child: pw.TableHelper.fromTextArray(
+                      border: pw.TableBorder.all(),
+                      headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                      headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
+                      cellStyle: const pw.TextStyle(fontSize: 9),
+                      headers: ['Alasan Absensi', 'Jumlah'],
+                      data: [
+                        ['1. Sakit', '${rapor.absenSakit} Hari'],
+                        ['2. Izin', '${rapor.absenIzin} Hari'],
+                        ['3. Tanpa Keterangan', '${rapor.absenAlpha} Hari'],
                       ],
                     ),
                   ),
                 ],
               ),
+              pw.SizedBox(height: 15),
 
+              // --- BAGIAN C: NILAI HAFALAN / TAHFIDZ (TERPISAH SEPENUHNYA) ---
+              pw.Text('C. Nilai Hafalan / Tahfidz', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
+              pw.SizedBox(height: 5),
+              pw.TableHelper.fromTextArray(
+                border: pw.TableBorder.all(),
+                headerDecoration: const pw.BoxDecoration(color: PdfColors.grey200),
+                headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+                cellStyle: const pw.TextStyle(fontSize: 10),
+                headers: ['No', 'Materi / Surah / Juz', 'Nilai', 'Predikat', 'Keterangan'],
+                columnWidths: {
+                  0: const pw.FixedColumnWidth(30),
+                  1: const pw.FlexColumnWidth(3),
+                  2: const pw.FixedColumnWidth(40),
+                  3: const pw.FixedColumnWidth(50),
+                  4: const pw.FlexColumnWidth(2),
+                },
+                data: tableHafalanData,
+              ),
               pw.SizedBox(height: 20),
 
-              // --- STATUS KENAIKAN ---
+              // --- STATUS KENAIKAN KELAS ---
               pw.Container(
                   padding: const pw.EdgeInsets.all(10),
                   width: double.infinity,
                   decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.black)),
-                  child: pw.Center(
-                      child: pw.Text('STATUS KENAIKAN KELAS: $statusKenaikan',
-                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11)))),
+                  child: pw.Center(child: pw.Text('STATUS KENAIKAN KELAS: $statusKenaikan', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 11)))),
+              pw.SizedBox(height: 30),
 
-              pw.SizedBox(height: 35),
-
-              // --- TANDA TANGAN ---
+              // --- AREA TANDA TANGAN ---
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
                 children: [
@@ -267,44 +271,34 @@ class RaporPdfService {
       ),
     );
 
-    // ==========================================
-    // MENGUBAH PDF MENJADI BYTES & SIMPAN KE LOKAL
-    // ==========================================
     final pdfBytes = await pdf.save();
     final fileName = "Rapor_${rapor.namaSantri.replaceAll(' ', '_')}.pdf";
 
-    // Menyimpan file secara background ke direktori lokal
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File("${dir.path}/$fileName");
-    await file.writeAsBytes(pdfBytes);
+    if (!kIsWeb) {
+      final dir = await getApplicationDocumentsDirectory();
+      final file = File("${dir.path}/$fileName");
+      await file.writeAsBytes(pdfBytes);
+    }
 
-    // ==========================================
-    // MEMUNCULKAN DIALOG "SIMPAN SEBAGAI PDF" (NATIVE PRINT)
-    // ==========================================
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdfBytes,
       name: fileName,
     );
-
-    // CATATAN: 
-    // Fitur 'OpenFile' dan 'Share' tetap dinonaktifkan (di-comment) 
-    // karena `Printing.layoutPdf` di atas sudah otomatis memunculkan tampilan Simpan/Print.
-    // await OpenFile.open(file.path);
-    // await Share.shareXFiles([XFile(file.path)], text: 'Berikut adalah e-Rapor...');
   }
 
-  // Helper Widgets
+  // Helper Widget Informasi Santri
   pw.Widget _infoText(String label, String val) => pw.Padding(
-        padding: const pw.EdgeInsets.fromLTRB(0, 2, 0, 2),
+        padding: const pw.EdgeInsets.symmetric(vertical: 2),
         child: pw.Text('$label : $val', style: const pw.TextStyle(fontSize: 10)),
       );
 
-  pw.Widget _ttdBox(String title) =>
-      pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
-        pw.Text(title,
-            style: const pw.TextStyle(fontSize: 10),
-            textAlign: pw.TextAlign.center),
-        pw.SizedBox(height: 50),
-        pw.Text('....................', style: const pw.TextStyle(fontSize: 10)),
-      ]);
+  // Helper Widget Kolom Tanda Tangan (Menggunakan prefix pw. secara tepat)
+  pw.Widget _ttdBox(String title) => pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.center, 
+        children: [
+          pw.Text(title, style: const pw.TextStyle(fontSize: 10), textAlign: pw.TextAlign.center),
+          pw.SizedBox(height: 45), 
+          pw.Text('....................', style: const pw.TextStyle(fontSize: 10)),
+        ],
+      );
 }

@@ -193,10 +193,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
         break;
       case 'Prediksi AI':
-        targetScreen = PrediksiScreen(
-          userRole: widget.userRole,
-          santriId: widget.santriId,
-        );
+        targetScreen = PrediksiScreen();
         break;
       case 'Laporan':
         targetScreen = const LaporanScreen();
