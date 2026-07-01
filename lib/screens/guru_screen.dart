@@ -56,7 +56,7 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
       final query = _searchQuery.toLowerCase();
       filtered = filtered.where((g) => 
         g.nama.toLowerCase().contains(query) ||
-        g.kelas.toLowerCase().contains(query) || // <-- Pencarian sekarang berdasarkan Kelas
+        g.kelas.toLowerCase().contains(query) || 
         g.username.toLowerCase().contains(query)
       ).toList();
     }
@@ -83,52 +83,82 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
   void _showFormDialog({GuruModel? guru}) {
     final nameCtrl = TextEditingController(text: guru?.nama ?? '');
     final nipCtrl = TextEditingController(text: guru?.nip ?? '');
-    final kelasCtrl = TextEditingController(text: guru?.kelas ?? ''); // <-- Controller untuk Kelas
     final userCtrl = TextEditingController(text: guru?.username ?? '');
     final passCtrl = TextEditingController(); 
 
+    // Default pilihan kelas
+    String selectedKelas = guru?.kelas ?? 'Kelas sp'; 
+    final List<String> daftarKelas = ['Kelas sp', 'Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4'];
+
+    // Validasi pencegahan error jika data lama kelasnya tidak ada di daftar
+    if (!daftarKelas.contains(selectedKelas)) {
+      selectedKelas = daftarKelas[0];
+    }
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(guru == null ? 'Tambah Akun Guru' : 'Edit Data Guru'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nama Guru')),
-              TextField(controller: nipCtrl, decoration: const InputDecoration(labelText: 'NIP / ID Guru')),
-              TextField(controller: kelasCtrl, decoration: const InputDecoration(labelText: 'Kelas')), // <-- Label Form
-              TextField(controller: userCtrl, decoration: const InputDecoration(labelText: 'Alamat Email (Username)')),
-              if (guru == null) TextField(controller: passCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+      builder: (ctx) => StatefulBuilder( // Gunakan StatefulBuilder agar Dropdown bisa di-update
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text(guru == null ? 'Tambah Akun Guru' : 'Edit Data Guru'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nama Guru')),
+                  TextField(controller: nipCtrl, decoration: const InputDecoration(labelText: 'NIP / ID Guru')),
+                  
+                  // --- MENGGUNAKAN DROPDOWN UNTUK KELAS ---
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: selectedKelas,
+                    decoration: const InputDecoration(labelText: 'Mengajar Kelas'),
+                    items: daftarKelas.map((String kls) {
+                      return DropdownMenuItem(value: kls, child: Text(kls));
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setDialogState(() => selectedKelas = val);
+                      }
+                    },
+                  ),
+                  
+                  TextField(controller: userCtrl, decoration: const InputDecoration(labelText: 'Alamat Email (Username)')),
+                  if (guru == null) TextField(controller: passCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+              ElevatedButton(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  setState(() => _isLoading = true);
+                  try {
+                    if (guru == null) {
+                      await _guruService.tambahGuru({
+                        'nama': nameCtrl.text, 'nip': nipCtrl.text, 
+                        'kelas': selectedKelas, // <-- Simpan dari dropdown
+                        'username': userCtrl.text, 'password': passCtrl.text, 'role': 'Guru', 'status': 'Aktif'
+                      });
+                    } else {
+                      await _guruService.updateGuru(guru.id, {
+                        'nama': nameCtrl.text, 'nip': nipCtrl.text, 
+                        'kelas': selectedKelas, // <-- Simpan dari dropdown
+                        'username': userCtrl.text
+                      });
+                    }
+                    _fetchData();
+                  } catch (e) {
+                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                    setState(() => _isLoading = false);
+                  }
+                },
+                child: const Text('Simpan'),
+              ),
             ],
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              setState(() => _isLoading = true);
-              try {
-                if (guru == null) {
-                  await _guruService.tambahGuru({
-                    'nama': nameCtrl.text, 'nip': nipCtrl.text, 'kelas': kelasCtrl.text, // <-- Simpan sebagai 'kelas'
-                    'username': userCtrl.text, 'password': passCtrl.text, 'role': 'Guru', 'status': 'Aktif'
-                  });
-                } else {
-                  await _guruService.updateGuru(guru.id, {
-                    'nama': nameCtrl.text, 'nip': nipCtrl.text, 'kelas': kelasCtrl.text, 'username': userCtrl.text
-                  });
-                }
-                _fetchData();
-              } catch (e) {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
-                setState(() => _isLoading = false);
-              }
-            },
-            child: const Text('Simpan'),
-          ),
-        ],
+          );
+        }
       ),
     );
   }
@@ -241,7 +271,7 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
                 _filterData();
               },
               decoration: InputDecoration(
-                hintText: 'Cari nama guru, kelas, atau email...', // <-- Hint diperbarui
+                hintText: 'Cari nama guru, kelas, atau email...', 
                 hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 13),
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 border: InputBorder.none,
@@ -298,7 +328,7 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
       child: const Row(
         children: [
           Expanded(flex: 3, child: Text('Nama Guru', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF1E1E24)))),
-          Expanded(flex: 2, child: Text('Kelas', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF1E1E24)))), // <-- Tabel Header diperbarui
+          Expanded(flex: 2, child: Text('Kelas', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF1E1E24)))),
           Expanded(flex: 2, child: Text('Username', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF1E1E24)))),
           Expanded(flex: 2, child: Text('Status', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF1E1E24)))),
         ],
@@ -356,7 +386,7 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
               ],
             ),
           ),
-          Expanded(flex: 2, child: Text(guru.kelas, style: const TextStyle(fontSize: 12, color: Colors.black87))), // <-- Isi Tabel diperbarui
+          Expanded(flex: 2, child: Text(guru.kelas, style: const TextStyle(fontSize: 12, color: Colors.black87))), 
           Expanded(flex: 2, child: Text(guru.username, style: const TextStyle(fontSize: 12, color: Colors.black87))),
           Expanded(
             flex: 2,

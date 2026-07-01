@@ -1,455 +1,610 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../services/prediksi_service.dart'; // Sesuaikan dengan path service prediksi Anda
-import '../services/firestore_service.dart'; // Sesuaikan dengan path firestore Anda
-import '../models/santri_model.dart'; // Sesuaikan dengan path model santri Anda
+import 'package:firebase_auth/firebase_auth.dart';
+import '../services/prediksi_service.dart';
+import '../services/firestore_service.dart';
+import '../models/santri_model.dart';
 
 class PrediksiScreen extends StatefulWidget {
-  final String role; 
-  const PrediksiScreen({super.key, this.role = 'ustadz'}); 
+  final String role;
+  final String? santriId; // wajib diisi saat role == 'wali_santri'
+
+  const PrediksiScreen({
+    super.key,
+    this.role = 'ustadz',
+    this.santriId,
+  });
 
   @override
-  State<PrediksiScreen> createState() => _PrediksiScreenState(); 
+  State<PrediksiScreen> createState() => _PrediksiScreenState();
 }
 
 class _PrediksiScreenState extends State<PrediksiScreen> {
-  final TextEditingController _hafalanController = TextEditingController();
-  final TextEditingController _kehadiranController = TextEditingController();
-  final TextEditingController _akademikController = TextEditingController();
-  final TextEditingController _perilakuController = TextEditingController();
+  // ─── Controllers (Sekarang Semua Otomatis & Read-Only) ──────────────────────
+  final TextEditingController _hafalanCtrl = TextEditingController();
+  final TextEditingController _kehadiranCtrl = TextEditingController();
+  final TextEditingController _akademikCtrl = TextEditingController();
+  final TextEditingController _perilakuCtrl = TextEditingController();
 
+  // ─── State ────────────────────────────────────────────────────────────────────
   String _hasilPrediksi = "";
-  bool _isLoading = false;
-  bool _isFetchingData = false;
+  bool _isLoading = false; 
+  bool _isFetching = false; 
+  bool _isAdmin = true;
 
-  bool get _isWaliSantri => widget.role == 'wali_santri';
+  bool get _isWali => widget.role == 'wali_santri';
 
-  List<SantriModel> _allSantriList = [];
-  List<SantriModel> _filteredSantriList = [];
-  
+  // ─── Data Santri (hanya ustadz/admin) ─────────────────────────────────────────
+  List<SantriModel> _allSantri = [];
+  List<SantriModel> _filteredSantri = [];
+
   final List<String> _kelasList = ['Kelas sp', 'Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4'];
-  String _selectedKelas = 'Kelas 4'; 
+  String _selectedKelas = 'Kelas 4';
   String _selectedSantriId = '';
-  final String _selectedTahunAjaran = '2025/2026'; 
   String _namaSantriTerpilih = 'Pilih Nama Santri...';
 
+  // Data Wali Santri
+  String _namaAnak = '';
+  String _kelasAnak = '';
+
+  static const String _tahunAjaran = '2025/2026';
+
+  // ─── Lifecycle ────────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
-    _loadDataSantri();
-  }
-
-  Future<void> _loadDataSantri() async {
-    try {
-      _allSantriList = await FirestoreService.getSantriList();
-      _allSantriList = _allSantriList.where((s) => s.status.toLowerCase().contains('aktif')).toList();
-      _filterSantriBerdasarkanKelas();
-    } catch (e) {
-      debugPrint("Gagal load data santri: $e");
+    if (_isWali) {
+      _initWaliSantri();
+    } else {
+      _checkRoleAndLoadSantri();
     }
   }
 
-  void _filterSantriBerdasarkanKelas() {
-    setState(() {
-      _filteredSantriList = _allSantriList.where((s) {
-        return s.kelas.toLowerCase().trim() == _selectedKelas.toLowerCase().trim();
-      }).toList();
-      _filteredSantriList.sort((a, b) => a.nama.compareTo(b.nama));
-      
-      _selectedSantriId = '';
-      _namaSantriTerpilih = 'Pilih Nama Santri...';
-      _bersihkanForm();
-    });
+  @override
+  void dispose() {
+    _hafalanCtrl.dispose();
+    _kehadiranCtrl.dispose();
+    _akademikCtrl.dispose();
+    _perilakuCtrl.dispose();
+    super.dispose();
   }
 
-  void _bersihkanForm() {
-    _hafalanController.clear();
-    _kehadiranController.clear();
-    _akademikController.clear();
-    _perilakuController.clear();
-    _hasilPrediksi = "";
-  }
-
-  Future<void> _tarikDataNilaiOtomatis() async {
-    if (_selectedSantriId.isEmpty) return;
-
-    setState(() {
-      _isFetchingData = true;
-      _hasilPrediksi = "";
-    });
-
+  // ══════════════════════════════════════════════════════════════════════════════
+  // WALI SANTRI — hanya ambil hasil prediksi
+  // ══════════════════════════════════════════════════════════════════════════════
+  Future<void> _initWaliSantri() async {
+    if (widget.santriId == null || widget.santriId!.isEmpty) return;
+    setState(() => _isFetching = true);
     try {
-      String semester = _selectedKelas; 
-      String docId = "${_selectedSantriId}_${_selectedTahunAjaran.replaceAll('/', '-')}_${semester.replaceAll(' ', '')}";
-      
-      final docSnapshot = await FirebaseFirestore.instance.collection('nilai').doc(docId).get();
-
+      final santriDoc = await FirebaseFirestore.instance.collection('santri').doc(widget.santriId).get();
       if (!mounted) return;
 
-      if (docSnapshot.exists && docSnapshot.data() != null) {
-        Map<String, dynamic> data = docSnapshot.data()!;
-        
-        double kehadiran = double.tryParse(data['nilai_kehadiran']?.toString() ?? '0') ?? 0.0;
-        double perilaku = double.tryParse(data['nilai_perilaku']?.toString() ?? '0') ?? 0.0;
+      if (!santriDoc.exists) return;
+      final santriData = santriDoc.data()!;
+      _namaAnak = santriData['nama'] ?? 'Santri';
+      _kelasAnak = santriData['kelas'] ?? '';
 
-        double totalUts = 0; int countUts = 0;
-        if (data['uts'] is Map) {
-          (data['uts'] as Map).forEach((_, v) { totalUts += double.tryParse(v.toString()) ?? 0; countUts++; });
-        }
-        double avgUts = countUts > 0 ? totalUts / countUts : 0.0;
+      final tahun = _tahunAjaran.replaceAll('/', '-');
+      final kelasId = _kelasAnak.replaceAll(' ', '');
+      final docId = '${widget.santriId}_${tahun}_$kelasId';
 
-        double totalUas = 0; int countUas = 0;
-        if (data['uas'] is Map) {
-          (data['uas'] as Map).forEach((_, v) { totalUas += double.tryParse(v.toString()) ?? 0; countUas++; });
-        }
-        double avgUas = countUas > 0 ? totalUas / countUas : 0.0;
-        double nilaiAkademikGabungan = (avgUts + avgUas) / 2;
+      final nilaiDoc = await FirebaseFirestore.instance.collection('nilai').doc(docId).get();
+      if (!mounted) return;
 
-        double totalHafalan = 0; int countHafalan = 0;
-        if (data['hafalan_kitab'] is Map) {
-          (data['hafalan_kitab'] as Map).forEach((_, v) { totalHafalan += double.tryParse(v.toString()) ?? 0; countHafalan++; });
-        }
-        double avgHafalan = countHafalan > 0 ? totalHafalan / countHafalan : 0.0;
-
-        _hafalanController.text = avgHafalan.toStringAsFixed(1);
-        _kehadiranController.text = kehadiran.toStringAsFixed(1);
-        _akademikController.text = nilaiAkademikGabungan.toStringAsFixed(1);
-        _perilakuController.text = perilaku.toStringAsFixed(1);
-
-        if (data['status_prediksi_ai'] != null) {
-          _hasilPrediksi = "Prediksi: ${data['status_prediksi_ai']}";
-        } else {
-          if (_isWaliSantri) {
-            _hasilPrediksi = "Belum ada hasil analisis dari Ustadz";
-          }
-        }
-
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Data nilai berhasil ditarik!"), backgroundColor: Colors.green));
-      } else {
-        _bersihkanForm();
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Belum ada data nilai tersimpan untuk santri ini."), backgroundColor: Colors.orange));
-      }
-    } catch (e) {
-      debugPrint("Error tarik nilai: $e");
-    } finally {
-      if (mounted) {
+      if (nilaiDoc.exists && nilaiDoc.data() != null) {
+        final pred = nilaiDoc.data()!['status_prediksi_ai']?.toString() ?? '';
         setState(() {
-          _isFetchingData = false;
+          _hasilPrediksi = pred.isNotEmpty ? pred : '';
         });
       }
+    } catch (e) {
+      debugPrint('_initWaliSantri error: $e');
+    } finally {
+      if (mounted) setState(() => _isFetching = false);
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // USTADZ / ADMIN — Load Role & Santri
+  // ══════════════════════════════════════════════════════════════════════════════
+  Future<void> _checkRoleAndLoadSantri() async {
+    setState(() => _isFetching = true);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final docUser = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        if (docUser.exists) {
+          final userData = docUser.data()!;
+          final String role = (userData['role'] ?? '').toString().toLowerCase();
+
+          if (role == 'guru') {
+            _isAdmin = false;
+            _selectedKelas = userData['kelas'] ?? 'Kelas 1'; 
+          } else {
+            _isAdmin = true;
+          }
+        }
+      }
+      
+      final list = await FirestoreService.getSantriList();
+      _allSantri = list.where((s) {
+        final st = s.status.toLowerCase().trim();
+        return st.contains('aktif') || st.isEmpty;
+      }).toList();
+      
+      _filterSantri();
+    } catch (e) {
+      debugPrint('_checkRoleAndLoadSantri error: $e');
+    } finally {
+      if (mounted) setState(() => _isFetching = false);
+    }
+  }
+
+  void _filterSantri() {
+    setState(() {
+      _filteredSantri = _allSantri
+          .where((s) => s.kelas.toLowerCase().trim() == _selectedKelas.toLowerCase().trim())
+          .toList()
+        ..sort((a, b) => a.nama.compareTo(b.nama));
+      _resetPilihan();
+    });
+  }
+
+  void _resetPilihan() {
+    _selectedSantriId = '';
+    _namaSantriTerpilih = 'Pilih Nama Santri...';
+    _bersihkan();
+  }
+
+  void _bersihkan() {
+    _hafalanCtrl.clear();
+    _kehadiranCtrl.clear();
+    _akademikCtrl.clear();
+    _perilakuCtrl.clear();
+    setState(() => _hasilPrediksi = '');
+  }
+
+  String _docId(String santriId, String kelas) {
+    final tahun = _tahunAjaran.replaceAll('/', '-');
+    final kelasId = kelas.replaceAll(' ', '');
+    return '${santriId}_${tahun}_$kelasId';
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // TARIK NILAI OTOMATIS: 100% Mengambil dari Input Nilai
+  // ══════════════════════════════════════════════════════════════════════════════
+  Future<void> _tarikNilaiOtomatis(String santriId, String kelas) async {
+    setState(() {
+      _isFetching = true;
+      _hasilPrediksi = '';
+    });
+    try {
+      final snap = await FirebaseFirestore.instance.collection('nilai').doc(_docId(santriId, kelas)).get();
+      if (!mounted) return;
+
+      if (snap.exists && snap.data() != null) {
+        final d = snap.data()!;
+
+        final kehadiran = _toDouble(d['nilai_kehadiran']);
+        final perilaku = _toDouble(d['nilai_perilaku']);
+        
+        // Akademik hanya ditarik dari rata-rata UAS
+        final avgUas = _avgMap(d['uas']);
+        final akademik = avgUas;
+
+        // Hafalan Lisan ditarik otomatis dari map hafalan_kitab (hanya yang lisan)
+        double totalHafalan = 0;
+        int countHafalan = 0;
+        if (d['hafalan_kitab'] is Map) {
+          (d['hafalan_kitab'] as Map).forEach((k, v) {
+            if (k.toString().toLowerCase().contains('lisan')) {
+              final n = _toDouble(v);
+              if (n > 0) {
+                totalHafalan += n;
+                countHafalan++;
+              }
+            }
+          });
+        }
+        final hafalan = countHafalan > 0 ? (totalHafalan / countHafalan) : 0.0;
+
+        final pred = d['status_prediksi_ai']?.toString() ?? '';
+
+        setState(() {
+          _kehadiranCtrl.text = kehadiran > 0 ? kehadiran.toStringAsFixed(1) : '';
+          _akademikCtrl.text = akademik > 0 ? akademik.toStringAsFixed(1) : '';
+          _perilakuCtrl.text = perilaku > 0 ? perilaku.toStringAsFixed(1) : '';
+          _hafalanCtrl.text = hafalan > 0 ? hafalan.toStringAsFixed(1) : '';
+          _hasilPrediksi = pred;
+        });
+
+        if (kehadiran == 0 || akademik == 0 || perilaku == 0 || hafalan == 0) {
+          _snack('⚠️ Terdapat nilai yang masih kosong di menu Input Nilai.', Colors.orange);
+        } else {
+          _snack('✅ Semua nilai berhasil ditarik otomatis. Silakan jalankan AI.', Colors.green);
+        }
+      } else {
+        _bersihkan();
+        _snack('⚠️ Belum ada data nilai untuk santri ini di kelas $_selectedKelas.', Colors.orange);
+      }
+    } catch (e) {
+      _snack('Gagal tarik data: $e', Colors.red);
+    } finally {
+      if (mounted) setState(() => _isFetching = false);
+    }
+  }
+
+  double _toDouble(dynamic val) => double.tryParse(val?.toString().replaceAll(',', '.') ?? '0') ?? 0.0;
+
+  double _avgMap(dynamic m) {
+    if (m is! Map) return 0.0;
+    double s = 0;
+    int c = 0;
+    m.forEach((_, v) {
+      s += double.tryParse(v.toString()) ?? 0;
+      c++;
+    });
+    return c > 0 ? s / c : 0.0;
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // PROSES PREDIKSI AI + SIMPAN KE FIRESTORE
+  // ══════════════════════════════════════════════════════════════════════════════
   Future<void> _prosesPrediksi() async {
-    if (_hafalanController.text.isEmpty ||
-        _kehadiranController.text.isEmpty ||
-        _akademikController.text.isEmpty ||
-        _perilakuController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Harap isi semua nilai!")),
-      );
+    if (_hafalanCtrl.text.trim().isEmpty || _kehadiranCtrl.text.trim().isEmpty ||
+        _akademikCtrl.text.trim().isEmpty || _perilakuCtrl.text.trim().isEmpty) {
+      _snack('⚠️ Seluruh parameter nilai harus lengkap sebelum AI bisa dijalankan.', Colors.orange);
       return;
     }
 
     setState(() {
       _isLoading = true;
-      _hasilPrediksi = "";
+      _hasilPrediksi = '';
     });
 
     try {
-      double hafalan = double.parse(_hafalanController.text);
-      double kehadiran = double.parse(_kehadiranController.text);
-      double akademik = double.parse(_akademikController.text);
-      double perilaku = double.parse(_perilakuController.text);
+      final hafalan = _toDouble(_hafalanCtrl.text);
+      final kehadiran = _toDouble(_kehadiranCtrl.text);
+      final akademik = _toDouble(_akademikCtrl.text);
+      final perilaku = _toDouble(_perilakuCtrl.text);
 
-      int hasilApi = await PrediksiApiService.getPrediksiKelulusan(
+      final hasilApi = await PrediksiApiService.getPrediksiKelulusan(
         hafalanKitab: hafalan,
         kehadiran: kehadiran,
         nilaiAkademik: akademik,
         nilaiPerilaku: perilaku,
       );
 
-      String teksHasil = "";
-      bool isKelas4 = _selectedKelas.toLowerCase().trim() == 'kelas 4';
-
-      if (hasilApi == 0) {
-        teksHasil = isKelas4 ? "LULUS TEPAT WAKTU" : "NAIK KELAS";
-      } else {
-        teksHasil = isKelas4 ? "TIDAK LULUS" : "TINGGAL KELAS";
-      }
+      final isKelas4 = _selectedKelas.toLowerCase().trim() == 'kelas 4';
+      final teksHasil = hasilApi == 0
+          ? (isKelas4 ? 'LULUS TEPAT WAKTU' : 'NAIK KELAS')
+          : (isKelas4 ? 'TIDAK LULUS' : 'TINGGAL KELAS');
 
       if (_selectedSantriId.isNotEmpty) {
-        String semester = _selectedKelas; 
-        String docId = "${_selectedSantriId}_${_selectedTahunAjaran.replaceAll('/', '-')}_${semester.replaceAll(' ', '')}";
-        
-        await FirebaseFirestore.instance.collection('nilai').doc(docId).set({
+        await FirebaseFirestore.instance.collection('nilai').doc(_docId(_selectedSantriId, _selectedKelas)).set({
           'status_prediksi_ai': teksHasil,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }
 
       if (!mounted) return;
-
-      setState(() {
-        _hasilPrediksi = "Prediksi: $teksHasil";
-      });
-
+      setState(() => _hasilPrediksi = teksHasil);
+      _snack('✅ Prediksi AI berhasil dijalankan!', Colors.green);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Terjadi kesalahan: $e")),
-      );
+      _snack('Terjadi kesalahan AI: $e', Colors.red);
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  String _getCatatanSpesial() {
-    final kelasKecil = _selectedKelas.toLowerCase().trim();
-    if (kelasKecil == 'kelas sp' || kelasKecil == 'kelas 1' || kelasKecil == 'kelas 2' || kelasKecil == 'kelas 3') {
-      if (_hasilPrediksi.contains("NAIK KELAS")) {
-        return "Pertahankan Hafalan nya lebih giat lagi belajar";
-      } else if (_hasilPrediksi.contains("TINGGAL KELAS")) {
-        return "Lebih giat lagi belajar dan menghafal nya";
-      }
+  String _getCatatan() {
+    final k = _isWali ? _kelasAnak : _selectedKelas;
+    final bukan4 = ['kelas sp', 'kelas 1', 'kelas 2', 'kelas 3'].contains(k.toLowerCase().trim());
+    if (!bukan4) return '';
+    if (_hasilPrediksi.contains('NAIK KELAS')) {
+      return 'Alhamdulillah! Pertahankan semangat hafalan dan belajarnya. 🌟';
+    } else if (_hasilPrediksi.contains('TINGGAL KELAS')) {
+      return 'Ayo lebih giat lagi belajar dan menghafal. Kamu pasti bisa! 💪';
     }
-    return "";
+    return '';
+  }
+
+  void _snack(String msg, Color bg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg), backgroundColor: bg, behavior: SnackBarBehavior.floating, duration: const Duration(seconds: 3)));
   }
 
   void _showSantriPicker() {
     showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
+      context: context, backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (context) {
-        return Container(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.5),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Pilih Santri', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              Expanded(
-                child: _filteredSantriList.isEmpty
-                    ? const Center(child: Text('Tidak ada santri di kelas ini'))
-                    : ListView.builder(
-                        itemCount: _filteredSantriList.length,
-                        itemBuilder: (context, idx) {
-                          final santri = _filteredSantriList[idx];
-                          return ListTile(
-                            leading: CircleAvatar(backgroundColor: Colors.blue[50], child: const Icon(Icons.person, color: Colors.blue)),
-                            title: Text(santri.nama, style: const TextStyle(fontWeight: FontWeight.w600)),
-                            onTap: () {
-                              final navigator = Navigator.of(context);
-                              setState(() {
-                                _selectedSantriId = santri.id;
-                                _namaSantriTerpilih = santri.nama;
-                              });
-                              navigator.pop();
-                              _tarikDataNilaiOtomatis(); 
-                            },
-                          );
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.55),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 12),
+          const Text('Pilih Santri', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _filteredSantri.isEmpty
+                ? const Center(child: Text('Tidak ada santri aktif di kelas ini'))
+                : ListView.builder(
+                    itemCount: _filteredSantri.length,
+                    itemBuilder: (_, idx) {
+                      final santri = _filteredSantri[idx];
+                      return ListTile(
+                        leading: CircleAvatar(backgroundColor: Colors.blue[50], child: Text(santri.nama[0], style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold))),
+                        title: Text(santri.nama, style: const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Text(santri.kelas, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          setState(() {
+                            _selectedSantriId = santri.id;
+                            _namaSantriTerpilih = santri.nama;
+                          });
+                          _tarikNilaiOtomatis(santri.id, _selectedKelas);
                         },
-                      ),
-              ),
-            ],
+                      );
+                    },
+                  ),
           ),
-        );
-      },
-    );
-  }
-
-  Widget _buildCustomTextField(String label, TextEditingController controller, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16.0),
-      child: TextField(
-        controller: controller,
-        readOnly: true, 
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: TextStyle(color: Colors.grey[600]),
-          prefixIcon: Icon(icon, color: Colors.blue[900]),
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade200)),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.blue.shade900, width: 2)),
-          contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
-        ),
+        ]),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final catatanSpesial = _getCatatanSpesial();
-
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFC), 
+      backgroundColor: const Color(0xFFFAFAFC),
       appBar: AppBar(
-        title: Text(_isWaliSantri ? 'Hasil Prediksi Santri' : 'Analisis Prediksi AI', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-        backgroundColor: Colors.blue[900], 
+        title: Text(
+          _isWali ? 'Hasil Prediksi Anak Saya' : 'Analisis Prediksi AI',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white),
+        ),
+        backgroundColor: Colors.blue[900],
         elevation: 0,
         centerTitle: true,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (!_isWaliSantri) ...[
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200), boxShadow: [BoxShadow(color: Colors.grey.withAlpha(20), blurRadius: 10, offset: const Offset(0, 5))]),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.manage_search_rounded, color: Colors.blue[900]),
-                        const SizedBox(width: 8),
-                        const Text("Tarik Data Santri", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                      ],
-                    ),
-                    const Divider(height: 24),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(color: const Color(0xFFFAFAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          isExpanded: true,
-                          value: _selectedKelas,
-                          items: _kelasList.map((k) => DropdownMenuItem(value: k, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w600)))).toList(),
-                          onChanged: (val) {
-                            if (val != null) {
-                              setState(() => _selectedKelas = val);
-                              _filterSantriBerdasarkanKelas();
-                            }
-                          },
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    InkWell(
-                      onTap: _showSantriPicker,
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(color: const Color(0xFFFAFAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(_namaSantriTerpilih, style: TextStyle(fontWeight: FontWeight.w600, color: _selectedSantriId.isEmpty ? Colors.grey : Colors.black)),
-                            _isFetchingData 
-                                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2)) 
-                                : const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              const Text("Parameter Penilaian (Otomatis)", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black87)),
-              const SizedBox(height: 12),
-              _buildCustomTextField('Nilai Rata-Rata Hafalan Kitab', _hafalanController, Icons.menu_book_rounded),
-              _buildCustomTextField('Persentase Kehadiran (%)', _kehadiranController, Icons.co_present_rounded),
-              _buildCustomTextField('Nilai Rata-rata Academic', _akademikController, Icons.school_rounded),
-              _buildCustomTextField('Nilai Perilaku / Akhlak', _perilakuController, Icons.emoji_emotions_rounded),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: _isLoading ? null : _prosesPrediksi,
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  backgroundColor: Colors.blue[900],
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  elevation: 2,
-                ),
-                child: _isLoading
-                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text('Jalankan Analisis AI', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-              ),
-              const SizedBox(height: 24),
-            ],
-
-            if (_isWaliSantri && _hasilPrediksi.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-                child: const Center(
-                  child: Text("Belum ada data hasil analisis yang dirilis oleh Ustadz.", style: TextStyle(fontWeight: FontWeight.w500, color: Colors.grey)),
-                ),
-              ),
-            
-            if (_hasilPrediksi.isNotEmpty) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") 
-                        ? [Colors.red.shade50, Colors.red.shade100]
-                        : [Colors.green.shade50, Colors.green.shade100],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                    color: _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") ? Colors.red.shade200 : Colors.green.shade200,
-                    width: 2,
-                  ),
-                  boxShadow: [BoxShadow(color: Colors.grey.withAlpha(20), blurRadius: 10, offset: const Offset(0, 5))],
-                ),
-                child: Column(
-                  children: [
-                    Icon(
-                      _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") ? Icons.cancel_rounded : Icons.check_circle_rounded,
-                      size: 40,
-                      color: _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") ? Colors.red[700] : Colors.green[700],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      _hasilPrediksi,
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: _hasilPrediksi.contains("TIDAK") || _hasilPrediksi.contains("TINGGAL") ? Colors.red[800] : Colors.green[800],
-                      ),
-                    ),
-                    
-                    if (catatanSpesial.isNotEmpty) ...[
-  // Tambahkan const di depan Padding untuk menghilangkan warning linter
-  const Padding( 
-    padding: EdgeInsets.symmetric(horizontal: 20.0),
-    child: Divider(color: Colors.black26, height: 20), 
-  ),
-  Text(
-    catatanSpesial,
-    textAlign: TextAlign.center,
-    style: TextStyle(
-      fontSize: 14,
-      fontWeight: FontWeight.w600,
-      fontStyle: FontStyle.italic,
-      color: _hasilPrediksi.contains("TINGGAL") ? Colors.red.shade900 : Colors.green.shade900,
-    ),
-  ),
-],
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 40),
-          ],
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.pop(context),
         ),
       ),
+      body: _isFetching
+          ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [CircularProgressIndicator(), SizedBox(height: 16), Text('Mengambil data...', style: TextStyle(color: Colors.grey))]))
+          : _isWali
+              ? _buildWaliView()
+              : _buildUstadzView(),
+    );
+  }
+
+  Widget _buildWaliView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(color: Colors.blue[900], borderRadius: BorderRadius.circular(14)),
+          child: Row(children: [
+            const CircleAvatar(backgroundColor: Colors.white24, child: Icon(Icons.person, color: Colors.white)),
+            const SizedBox(width: 14),
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Santri', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              Text(_namaAnak, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+              Text(_kelasAnak, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ]),
+          ]),
+        ),
+        const SizedBox(height: 28),
+        if (_hasilPrediksi.isNotEmpty) _buildHasilCard(_hasilPrediksi) else _buildBelumAdaHasil(),
+        const SizedBox(height: 40),
+      ]),
+    );
+  }
+
+  Widget _buildBelumAdaHasil() {
+    return Container(
+      padding: const EdgeInsets.all(32),
+      decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(14), border: Border.all(color: Colors.amber.shade200)),
+      child: const Column(children: [
+        Icon(Icons.hourglass_empty_rounded, color: Colors.orange, size: 48),
+        SizedBox(height: 14),
+        Text('Hasil prediksi belum tersedia.', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15), textAlign: TextAlign.center),
+        SizedBox(height: 8),
+        Text('Pengurus pesantren belum menjalankan analisis AI untuk anak ini.', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: Colors.grey, height: 1.5)),
+      ]),
+    );
+  }
+
+  Widget _buildUstadzView() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(20),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        _stepLabel('1', 'Tahun Ajaran & Kelas'),
+        const SizedBox(height: 10),
+        
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey.shade300)),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  const Text('Tahun Ajaran', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    Expanded(child: Text(_tahunAjaran, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black54), overflow: TextOverflow.ellipsis)),
+                    const Icon(Icons.lock, size: 14, color: Colors.grey),
+                  ]),
+                ]),
+              ),
+            ),
+            const SizedBox(width: 10),
+            if (_isAdmin)
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade300)),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String>(
+                      isExpanded: true, value: _selectedKelas, icon: const Icon(Icons.keyboard_arrow_down),
+                      items: _kelasList.map((k) => DropdownMenuItem(value: k, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)))).toList(),
+                      onChanged: (val) {
+                        if (val == null) return;
+                        setState(() => _selectedKelas = val);
+                        _filterSantri();
+                      },
+                    ),
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey.shade300)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('Kelas Anda', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                    const SizedBox(height: 4),
+                    Row(children: [
+                      Expanded(child: Text(_selectedKelas, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black54), overflow: TextOverflow.ellipsis)),
+                      const Icon(Icons.lock, size: 14, color: Colors.grey),
+                    ]),
+                  ]),
+                ),
+              ),
+          ],
+        ),
+
+        const SizedBox(height: 20),
+        _stepLabel('2', 'Pilih Santri'),
+        const SizedBox(height: 10),
+        InkWell(
+          onTap: _showSantriPicker,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.all(13),
+            decoration: BoxDecoration(color: _selectedSantriId.isNotEmpty ? Colors.blue.shade50 : Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: _selectedSantriId.isNotEmpty ? Colors.blue.shade300 : Colors.grey.shade300)),
+            child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              Row(children: [
+                Icon(Icons.person_search, color: _selectedSantriId.isNotEmpty ? Colors.blue[900] : Colors.grey, size: 20),
+                const SizedBox(width: 8),
+                Text(_namaSantriTerpilih, style: TextStyle(fontWeight: FontWeight.w600, color: _selectedSantriId.isEmpty ? Colors.grey : Colors.black87)),
+              ]),
+              const Icon(Icons.arrow_drop_down, color: Colors.grey),
+            ]),
+          ),
+        ),
+
+        if (_selectedSantriId.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          _stepLabel('3', 'Parameter AI (Diambil Otomatis)'),
+          const SizedBox(height: 10),
+
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.blue.shade100)),
+            child: Row(children: [
+              Icon(Icons.sync_rounded, color: Colors.blue[800], size: 16),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Data terkunci. Mengambil langsung dari rata-rata Input Nilai di menu akademik.', style: TextStyle(fontSize: 11, color: Colors.blue[900], fontWeight: FontWeight.w500))),
+            ]),
+          ),
+          const SizedBox(height: 12),
+
+          _buildFieldManual(label: 'Nilai Hafalan (Rata-rata Lisan)', hint: 'Belum terisi', icon: Icons.menu_book_rounded, ctrl: _hafalanCtrl),
+          _buildFieldManual(label: 'Kehadiran (%)', hint: 'Belum terisi', icon: Icons.co_present_rounded, ctrl: _kehadiranCtrl),
+          _buildFieldManual(label: 'Nilai Akademik (Rata-rata UAS)', hint: 'Belum terisi', icon: Icons.school_rounded, ctrl: _akademikCtrl),
+          _buildFieldManual(label: 'Nilai Perilaku / Akhlak', hint: 'Belum terisi', icon: Icons.emoji_emotions_rounded, ctrl: _perilakuCtrl),
+
+          const SizedBox(height: 20),
+          _stepLabel('4', 'Jalankan Analisis'),
+          const SizedBox(height: 10),
+          ElevatedButton.icon(
+            onPressed: _isLoading ? null : _prosesPrediksi,
+            icon: _isLoading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)) : const Icon(Icons.auto_awesome, color: Colors.white),
+            label: Text(_isLoading ? 'Memproses...' : 'Simpan & Jalankan AI', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+            style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.blue[900], shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)), elevation: 2),
+          ),
+          const SizedBox(height: 24),
+        ],
+
+        if (_hasilPrediksi.isNotEmpty) _buildHasilCard(_hasilPrediksi),
+        const SizedBox(height: 40),
+      ]),
+    );
+  }
+
+  Widget _stepLabel(String n, String title) => Row(children: [
+        Container(width: 24, height: 24, decoration: BoxDecoration(color: Colors.blue[900], borderRadius: BorderRadius.circular(6)), child: Center(child: Text(n, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)))),
+        const SizedBox(width: 8),
+        Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
+      ]);
+
+  Widget _buildFieldManual({
+    required String label,
+    required String hint,
+    required IconData icon,
+    required TextEditingController ctrl,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icon, size: 14, color: Colors.grey[700]),
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[700])),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.grey.shade300)),
+            child: Text('🔄 Otomatis', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey[600])),
+          ),
+        ]),
+        const SizedBox(height: 5),
+        TextField(
+          controller: ctrl,
+          readOnly: true,
+          keyboardType: TextInputType.none,
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.grey[800]),
+          decoration: InputDecoration(
+            hintText: hint, hintStyle: TextStyle(color: Colors.grey[400], fontSize: 12),
+            filled: true, fillColor: Colors.grey.shade100,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
+            contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+            suffixIcon: const Icon(Icons.lock_outline, size: 16, color: Colors.grey),
+          ),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildHasilCard(String hasil) {
+    final isNegatif = hasil.contains('TIDAK') || hasil.contains('TINGGAL');
+    final catatan = _getCatatan();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: isNegatif ? [Colors.red.shade50, Colors.red.shade100] : [Colors.green.shade50, Colors.green.shade100], begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: isNegatif ? Colors.red.shade200 : Colors.green.shade200, width: 2),
+        boxShadow: [BoxShadow(color: Colors.grey.withValues(alpha: 0.2), blurRadius: 10, offset: const Offset(0, 5))],
+      ),
+      child: Column(children: [
+        Icon(isNegatif ? Icons.cancel_rounded : Icons.check_circle_rounded, size: 52, color: isNegatif ? Colors.red[700] : Colors.green[700]),
+        const SizedBox(height: 12),
+        Text(hasil, textAlign: TextAlign.center, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: isNegatif ? Colors.red[800] : Colors.green[800])),
+        if (catatan.isNotEmpty) ...[
+          Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Divider(color: isNegatif ? Colors.red.shade200 : Colors.green.shade200)),
+          Text(catatan, textAlign: TextAlign.center, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, fontStyle: FontStyle.italic, color: isNegatif ? Colors.red.shade900 : Colors.green.shade900)),
+        ],
+      ]),
     );
   }
 }

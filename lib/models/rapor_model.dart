@@ -50,6 +50,12 @@ class RaporModel {
   final int absenIzin;
   final int absenAlpha;
 
+  // --- TAMBAHAN BARU UNTUK NILAI SIKAP & KEHADIRAN ---
+  final double nilaiSikap;
+  final String predikatSikap;
+  final double nilaiKehadiran;
+  final String predikatKehadiran;
+
   final String predikat;
   final String catatanWaliKelas;
   final DateTime tanggalCetak;
@@ -69,6 +75,11 @@ class RaporModel {
     this.absenSakit = 0,
     this.absenIzin = 0,
     this.absenAlpha = 0,
+    // Nilai default untuk data lama
+    this.nilaiSikap = 0.0,
+    this.predikatSikap = '-',
+    this.nilaiKehadiran = 0.0,
+    this.predikatKehadiran = '-',
     required this.predikat,
     required this.catatanWaliKelas,
     required this.tanggalCetak,
@@ -77,19 +88,17 @@ class RaporModel {
   });
 
   factory RaporModel.fromMap(Map<String, dynamic> map, String documentId) {
-    // Penanganan konversi data dinamis dari nested array Firebase secara aman
+    // Penanganan konversi data dinamis dari nested array Firebase
     List<NilaiModel> parsedNilai = [];
     if (map['daftarNilai'] != null) {
       final List<dynamic> listRaw = map['daftarNilai'];
       parsedNilai = listRaw.map((x) {
-        if (x is Map<String, dynamic>) {
-          return NilaiModel.fromMap(x, '');
-        }
+        if (x is Map<String, dynamic>) return NilaiModel.fromMap(x, '');
         return NilaiModel(mataPelajaran: '-', nilaiHarian: 0.0, grade: '-');
       }).toList();
     }
 
-    // Penanganan konversi tipe data Waktu (Timestamp/String/DateTime)
+    // Penanganan Waktu
     DateTime parsedDate = DateTime.now();
     if (map['tanggalCetak'] != null) {
       if (map['tanggalCetak'] is Timestamp) {
@@ -98,6 +107,10 @@ class RaporModel {
         parsedDate = DateTime.tryParse(map['tanggalCetak']) ?? DateTime.now();
       }
     }
+
+    // Penanganan Nilai Sikap & Kehadiran (Mendukung nama field Firebase yang bervariasi)
+    double nSikap = (map['nilaiSikap'] ?? map['nilai_perilaku'] ?? 0.0).toDouble();
+    double nHadir = (map['nilaiKehadiran'] ?? map['nilai_kehadiran'] ?? 0.0).toDouble();
 
     return RaporModel(
       id: documentId,
@@ -112,6 +125,10 @@ class RaporModel {
       absenSakit: map['absenSakit'] ?? 0,
       absenIzin: map['absenIzin'] ?? 0,
       absenAlpha: map['absenAlpha'] ?? 0,
+      nilaiSikap: nSikap,
+      predikatSikap: map['predikatSikap'] ?? _getPredikatLokal(nSikap),
+      nilaiKehadiran: nHadir,
+      predikatKehadiran: map['predikatKehadiran'] ?? _getPredikatLokal(nHadir),
       predikat: map['predikat'] ?? '',
       catatanWaliKelas: map['catatanWaliKelas'] ?? '',
       tanggalCetak: parsedDate,
@@ -133,11 +150,25 @@ class RaporModel {
       'absenSakit': absenSakit,
       'absenIzin': absenIzin,
       'absenAlpha': absenAlpha,
+      'nilaiSikap': nilaiSikap,
+      'predikatSikap': predikatSikap,
+      'nilaiKehadiran': nilaiKehadiran,
+      'predikatKehadiran': predikatKehadiran,
       'predikat': predikat,
       'catatanWaliKelas': catatanWaliKelas,
-      'tanggalCetak': Timestamp.fromDate(tanggalCetak), // Disimpan sebagai format asli Firebase Timestamp
+      'tanggalCetak': Timestamp.fromDate(tanggalCetak), 
       'daftarNilai': daftarNilai.map((x) => x.toMap()).toList(),
       'nilaiRataRata': nilaiRataRata,
     };
+  }
+
+  // Helper fungsi untuk menghasilkan predikat otomatis jika tidak ditemukan di DB
+  static String _getPredikatLokal(double n) {
+    if (n <= 0) return '-';
+    if (n >= 90) return 'A';
+    if (n >= 80) return 'B';
+    if (n >= 70) return 'C';
+    if (n >= 60) return 'D';
+    return 'E';
   }
 }

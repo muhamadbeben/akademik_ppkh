@@ -193,7 +193,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
         break;
       case 'Prediksi AI':
-        targetScreen = PrediksiScreen();
+        targetScreen = const PrediksiScreen();
         break;
       case 'Laporan':
         targetScreen = const LaporanScreen();
@@ -221,8 +221,6 @@ class _DashboardScreenState extends State<DashboardScreen>
     );
   }
 
-  // PERBAIKAN LOGIKA NAVIGASI: Menggunakan pembacaan label item Nav Bar aktif agar tidak kosong
-  // Cari blok kode ini di dashboard_screen.dart dan ubah baris AccountScreen-nya
   Widget _buildAlternativeScreen() {
     final String currentLabel = _navItems[_currentIndex].label ?? '';
 
@@ -236,12 +234,12 @@ class _DashboardScreenState extends State<DashboardScreen>
       case 'Laporan':
         return const LaporanScreen();
       case 'Akun':
-        // PERBAIKAN DI SINI: Kirimkan userRole ke dalam halaman akun
-        return AccountScreen(userRole: widget.userRole); 
+        return AccountScreen(userRole: widget.userRole);
       default:
         return const Center(child: Text('Halaman Tidak Ditemukan'));
     }
   }
+
   Widget _buildMainDashboard() {
     final dynamicMenus = _displayMenus;
 
@@ -374,7 +372,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               child: Icon(
                 Icons.mosque,
                 size: 160,
-                color: Colors.white.withOpacity(0.5),
+                color: Colors.white.withValues(alpha: 0.5),
               ),
             ),
           ),
@@ -388,7 +386,6 @@ class _DashboardScreenState extends State<DashboardScreen>
                   children: [
                     GestureDetector(
                       onTap: () {
-                        // Langsung mengarah ke index paling ujung (Menu Akun) secara aman
                         setState(() => _currentIndex = _navItems.length - 1);
                       },
                       child: const CircleAvatar(
@@ -442,27 +439,11 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildFloatingDateCard() {
     final now = DateTime.now();
     final List<String> hari = [
-      'Senin',
-      'Selasa',
-      'Rabu',
-      'Kamis',
-      'Jumat',
-      'Sabtu',
-      'Minggu'
+      'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'
     ];
     final List<String> bulan = [
-      'Januari',
-      'Februari',
-      'Maret',
-      'April',
-      'Mei',
-      'Juni',
-      'Juli',
-      'Agustus',
-      'September',
-      'Oktober',
-      'November',
-      'Desember'
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
     ];
     final formatTanggal =
         '${hari[now.weekday - 1]}, ${now.day} ${bulan[now.month - 1]} ${now.year}';
@@ -474,7 +455,7 @@ class _DashboardScreenState extends State<DashboardScreen>
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 15,
             offset: const Offset(0, 8),
           ),
@@ -522,7 +503,7 @@ class _DashboardScreenState extends State<DashboardScreen>
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.02),
+              color: Colors.black.withValues(alpha: 0.02),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),
@@ -575,7 +556,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.02),
+                  color: Colors.black.withValues(alpha: 0.02),
                   blurRadius: 10,
                 ),
               ],
@@ -638,7 +619,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               borderRadius: BorderRadius.circular(16),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.02),
+                  color: Colors.black.withValues(alpha: 0.02),
                   blurRadius: 10,
                 ),
               ],
@@ -646,14 +627,14 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                Align(
+                const Align(
                   alignment: Alignment.centerLeft,
                   child: Text(
                     'Distribusi Santri',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 12,
-                      color: const Color(0xFF0A0E29),
+                      color: Color(0xFF0A0E29),
                     ),
                   ),
                 ),
