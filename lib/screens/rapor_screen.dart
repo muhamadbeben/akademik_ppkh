@@ -33,7 +33,11 @@ class _RaporScreenState extends State<RaporScreen> {
   // ─── State ────────────────────────────────────────────────────────────────────
   List<SantriModel> _santriList     = [];
   bool _isLoading                   = true;
+  
+  // ROLE BASED ACCESS
   bool _isWaliSantriMode            = false;
+  bool _isGuruMode                  = false;
+  String _kelasGuru                 = '';
   
   String _selectedKelas  = 'Semua Kelas';
   String _selectedTahun  = '2025/2026';
@@ -60,24 +64,37 @@ class _RaporScreenState extends State<RaporScreen> {
       String? targetId = widget.santriId;
       String? role     = widget.userRole;
 
+      // 1. CEK ROLE USER YANG SEDANG LOGIN
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         final doc = await FirebaseFirestore.instance
             .collection('users').doc(user.uid).get();
         if (doc.exists) {
           final d  = doc.data();
-          role     ??= d?['role']?.toString().trim();
+          role     ??= d?['role']?.toString().trim().toLowerCase();
           targetId ??= d?['santriId']?.toString().trim();
+          
+          if (role == 'guru') {
+            _isGuruMode = true;
+            _kelasGuru = d?['kelas']?.toString() ?? 'Kelas 1';
+            _selectedKelas = _kelasGuru; // Kunci otomatis ke kelas guru
+          }
         }
       }
 
-      if (role?.toLowerCase().trim() == 'walisantri') {
+      // 2. LOAD DATA SANTRI BERDASARKAN ROLE
+      if (role == 'walisantri') {
         _isWaliSantriMode = true;
         if (targetId != null && targetId.isNotEmpty) {
           final anak = await FirestoreService.getSantriById(targetId);
           if (anak != null) _santriList = [anak];
         }
+      } else if (_isGuruMode) {
+        _isWaliSantriMode = false;
+        // Hanya ambil santri di kelas guru tersebut (menggunakan filter dari database)
+        _santriList = await FirestoreService.getSantriList(kelas: _kelasGuru);
       } else {
+        // Mode Admin: Ambil semua santri
         _isWaliSantriMode = false;
         _santriList = await FirestoreService.getSantriList();
       }
@@ -536,12 +553,28 @@ class _RaporScreenState extends State<RaporScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(children: [
-        _filterTile(Icons.layers_outlined, _selectedKelas,
-            () => _showPicker('Pilih Kelas', _kelasList, (v) {
-              setState(() => _selectedKelas = v);
-              _refresh();
-            })),
+        // 1. FILTER KELAS (Dikunci jika Guru)
+        if (_isGuruMode)
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade300)),
+              child: Row(children: [
+                const Icon(Icons.lock, size: 16, color: Colors.grey),
+                const SizedBox(width: 8),
+                Expanded(child: Text(_kelasGuru, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54), overflow: TextOverflow.ellipsis)),
+              ]),
+            ),
+          )
+        else
+          _filterTile(Icons.layers_outlined, _selectedKelas, () => _showPicker('Pilih Kelas', _kelasList, (v) {
+            setState(() => _selectedKelas = v);
+            _refresh();
+          })),
+
         const SizedBox(width: 10),
+        
+        // 2. FILTER TAHUN AJARAN (Semua bebas ganti tahun)
         _filterTile(Icons.calendar_month_outlined, _selectedTahun,
             () => _showPicker('Tahun Ajaran', _tahunList, (v) {
               setState(() => _selectedTahun = v);

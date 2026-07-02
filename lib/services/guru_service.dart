@@ -6,67 +6,142 @@ import 'package:firebase_core/firebase_core.dart';
 import '../models/guru_model.dart';
 
 class KelolaGuruService {
-  final CollectionReference _guruCollection = FirebaseFirestore.instance.collection('guru');
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // 1. Ambil semua data guru
+  // --- MENGAMBIL DAFTAR GURU ---
+  // --- MENGAMBIL DAFTAR GURU ---
   Future<List<GuruModel>> getDaftarGuru() async {
-    final snapshot = await _guruCollection.get();
-    return snapshot.docs.map((doc) {
-      final data = doc.data() as Map<String, dynamic>;
-      data['id'] = doc.id; 
-      return GuruModel.fromMap(data); 
-    }).toList();
+    try {
+      final snapshot = await _db
+          .collection('guru')
+          .orderBy('createdAt', descending: true)
+          .get();
+      return snapshot.docs.map((doc) {
+        final data = doc.data();
+        return GuruModel(
+          id: doc.id,
+          nama: data['nama'] ?? '',
+          nip: data['nip'] ?? '',
+          kelas: data['kelas'] ?? '',
+          username: data['username'] ?? '',
+
+          // [TAMBAHKAN 2 BARIS INI] untuk memenuhi syarat 'required' di GuruModel
+          password: data['password'] ?? '',
+          role: data['role'] ?? 'Guru',
+          // -----------------------------------------------------------
+
+          status: data['status'] ?? 'Aktif',
+          imageUrl: data['imageUrl'],
+        );
+      }).toList();
+    } catch (e) {
+      throw Exception('Gagal mengambil data guru: $e');
+    }
   }
 
-  // 2. Fungsi Tambah Guru (DIPERBAIKI: Daftar ke Auth & Database)
+  // --- MENAMBAH GURU BARU ---
   Future<void> tambahGuru(Map<String, dynamic> data) async {
-    // Trik "Secondary App": Membuat instance Firebase sementara agar 
-    // akun Admin yang sedang dipakai tidak ter-logout saat mendaftarkan akun guru baru.
+    // Membuat instance Firebase sementara agar Admin yang sedang login TIDAK ter-logout
+    // saat mendaftarkan akun baru untuk Guru.
     FirebaseApp tempApp = await Firebase.initializeApp(
-      name: 'TempRegisterApp',
+      name: 'temp_register_${DateTime.now().millisecondsSinceEpoch}',
       options: Firebase.app().options,
     );
 
     try {
-      // Langkah 1: Buat akun login di Firebase Authentication
-      UserCredential userCredential = await FirebaseAuth.instanceFor(app: tempApp)
+      // 1. Daftarkan Email & Password Guru ke Firebase Auth
+      UserCredential userCred = await FirebaseAuth.instanceFor(app: tempApp)
           .createUserWithEmailAndPassword(
-        email: data['username'], // Pastikan field username diisi dengan format email
-        password: data['password'],
-      );
+              email: data['username'], password: data['password']);
 
-      // Langkah 2: Simpan data lengkap ke Firestore menggunakan UID dari Auth
-      String uidBaru = userCredential.user!.uid;
-      await _guruCollection.doc(uidBaru).set(data);
+      String uid = userCred.user!.uid;
 
-    } on FirebaseAuthException catch (e) {
-      throw 'Gagal membuat akun login: ${e.message}';
+      // 2. SIMPAN KE KOLEKSI 'users' (SANGAT PENTING UNTUK LOGIN & HAK AKSES)
+      await _db.collection('users').doc(uid).set({
+        'uid': uid,
+        'nama': data['nama'],
+        'email': data['username'],
+        'role': data['role'], // role: 'guru'
+        'kelas': data[
+            'kelas'], // KELAS DISIMPAN DI SINI AGAR GURU TERKUNCI DI KELASNYA
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      // 3. Simpan ke koleksi 'guru' untuk ditampilkan di tabel Kelola Guru
+      await _db.collection('guru').doc(uid).set({
+        'id': uid,
+        'nama': data['nama'],
+        'nip': data['nip'],
+        'kelas': data['kelas'],
+        'username': data['username'],
+        'status': data['status'],
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      throw Exception('Gagal mendaftarkan guru: $e');
     } finally {
-      // Hapus koneksi sementara setelah proses selesai
+      // Hapus instance sementara
       await tempApp.delete();
     }
   }
 
-  // 3. Fungsi untuk Edit/Update Data Guru
+  // --- UPDATE DATA GURU ---
   Future<void> updateGuru(String id, Map<String, dynamic> data) async {
-    await _guruCollection.doc(id).update(data);
+    try {
+      // Update di tabel guru
+      await _db.collection('guru').doc(id).update({
+        'nama': data['nama'],
+        'nip': data['nip'],
+        'kelas': data['kelas'],
+        'username': data['username'],
+      });
+
+      // Update juga di tabel users agar otentikasi loginnya ikut berubah (jika kelasnya dipindah)
+      await _db.collection('users').doc(id).update({
+        'nama': data['nama'],
+        'kelas': data['kelas'],
+      });
+    } catch (e) {
+      throw Exception('Gagal mengupdate data guru: $e');
+    }
   }
 
-  // 4. Fungsi untuk Mengubah Status Aktif/Nonaktif
-  Future<void> toggleStatusAkun(String id, String status) async {
-    await _guruCollection.doc(id).update({'status': status});
-  }
-
-  // 5. Fungsi untuk Reset Password (Di Firestore)
+  // --- RESET PASSWORD GURU ---
   Future<void> resetPassword(String id, String newPassword) async {
-    await _guruCollection.doc(id).update({'password': newPassword});
-    // Catatan: Reset password di Firebase Auth dari sisi client (admin) cukup rumit. 
-    // Pendekatan ini hanya mengubah string password di database. Jika login Anda murni
-    // menggunakan FirebaseAuth, user harus meresetnya via link email reset password bawaan Firebase.
+    try {
+      // Untuk mereset password secara langsung tanpa email link,
+      // ini membutuhkan penanganan khusus melalui backend atau Cloud Functions.
+      // Namun, jika kamu menggunakan metode sederhana, kita bisa lempar notifikasi.
+      throw Exception(
+          'Untuk mereset password, mohon gunakan fitur Lupa Password di halaman login, atau atur via Firebase Console.');
+    } catch (e) {
+      throw Exception('Gagal reset password: $e');
+    }
   }
 
-  // 6. Fungsi untuk Menghapus Guru
+  // --- UBAH STATUS AKUN (AKTIF/NONAKTIF) ---
+  Future<void> toggleStatusAkun(String id, String statusBaru) async {
+    try {
+      await _db.collection('guru').doc(id).update({'status': statusBaru});
+    } catch (e) {
+      throw Exception('Gagal mengubah status: $e');
+    }
+  }
+
+  // --- HAPUS GURU ---
   Future<void> hapusGuru(String id) async {
-    await _guruCollection.doc(id).delete();
+    try {
+      // Hapus dari tabel guru
+      await _db.collection('guru').doc(id).delete();
+
+      // Hapus dari tabel users agar tidak bisa login lagi
+      await _db.collection('users').doc(id).delete();
+
+      // Catatan: Menghapus dari Firebase Auth (Email/Password) secara langsung
+      // dari sisi client Flutter (Admin) membutuhkan Cloud Functions.
+      // Dengan menghapus dari koleksi 'users', role-nya akan hilang dan aplikasi akan menolaknya masuk.
+    } catch (e) {
+      throw Exception('Gagal menghapus guru: $e');
+    }
   }
 }

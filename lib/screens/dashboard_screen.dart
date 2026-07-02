@@ -88,30 +88,35 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   String get _cleanedRole => widget.userRole.trim().toLowerCase();
 
+  // [PERBAIKAN RBAC]: Mengatur menu utama berdasarkan role
   List<_MenuData> get _displayMenus {
     if (_cleanedRole == 'admin') {
       return _allMenus;
     }
     if (_cleanedRole == 'guru') {
+      // Guru melihat semua menu akademis, kecuali Kelola Guru & Wali
       return _allMenus
           .where(
             (menu) =>
-                menu.title.contains('Nilai') ||
-                menu.title.contains('Jadwal') ||
-                menu.title.contains('Rapot') ||
-                menu.title.contains('Prediksi'),
+                menu.title == 'Kelola Santri' ||
+                menu.title == 'Input Nilai' ||
+                menu.title == 'Jadwal Pelajaran' ||
+                menu.title == 'Cetak Rapot' ||
+                menu.title == 'Prediksi AI' ||
+                menu.title == 'Laporan',
           )
           .toList();
     }
+    // Wali Santri hanya melihat Rapot dan Prediksi AI
     return _allMenus
         .where(
           (menu) =>
-              menu.title.contains('Rapot') || menu.title.contains('Prediksi'),
+              menu.title == 'Cetak Rapot' || menu.title == 'Prediksi AI',
         )
         .toList();
   }
 
-  // Nav Bar Items yang disesuaikan secara dinamis berdasarkan role akun
+  // [PERBAIKAN RBAC]: Nav Bar Items disesuaikan secara dinamis
   List<BottomNavigationBarItem> get _navItems {
     final List<BottomNavigationBarItem> items = [
       const BottomNavigationBarItem(
@@ -130,7 +135,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       label: 'Akademik',
     ));
 
-    if (_cleanedRole == 'admin') {
+    if (_cleanedRole == 'admin' || _cleanedRole == 'guru') {
       items.add(const BottomNavigationBarItem(
         icon: Icon(Icons.description_outlined),
         label: 'Laporan',
@@ -193,7 +198,11 @@ class _DashboardScreenState extends State<DashboardScreen>
         );
         break;
       case 'Prediksi AI':
-        targetScreen = const PrediksiScreen();
+        // [PERBAIKAN]: Lempar parameter agar halaman AI tidak error untuk wali
+        targetScreen = PrediksiScreen(
+          role: _cleanedRole == 'walisantri' ? 'wali_santri' : 'ustadz',
+          santriId: widget.santriId,
+        );
         break;
       case 'Laporan':
         targetScreen = const LaporanScreen();
@@ -293,43 +302,48 @@ class _DashboardScreenState extends State<DashboardScreen>
                         );
                       },
                     ),
+                    
                     const SizedBox(height: 24),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Ringkasan',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0A0E29),
+                    
+                    // [PERBAIKAN PRIVASI]: Hanya Admin & Guru yang bisa melihat grafik pesantren
+                    if (_cleanedRole == 'admin' || _cleanedRole == 'guru') ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Ringkasan',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0A0E29),
+                            ),
                           ),
-                        ),
-                        TextButton(
-                          onPressed: () {},
-                          child: const Row(
-                            children: [
-                              Text(
-                                'Lihat semua ',
-                                style: TextStyle(
-                                  color: Color(0xFF4A32E5),
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
+                          TextButton(
+                            onPressed: () {},
+                            child: const Row(
+                              children: [
+                                Text(
+                                  'Lihat semua ',
+                                  style: TextStyle(
+                                    color: Color(0xFF4A32E5),
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
-                              ),
-                              Icon(
-                                Icons.arrow_forward_ios,
-                                size: 11,
-                                color: Color(0xFF4A32E5),
-                              ),
-                            ],
+                                Icon(
+                                  Icons.arrow_forward_ios,
+                                  size: 11,
+                                  color: Color(0xFF4A32E5),
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    _buildVisualAnalyticsSection(),
-                    const SizedBox(height: 32),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      _buildVisualAnalyticsSection(),
+                      const SizedBox(height: 32),
+                    ]
                   ],
                 ),
               ),

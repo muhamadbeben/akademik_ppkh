@@ -52,6 +52,7 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
     if (_selectedTab != 'Semua') {
       filtered = filtered.where((g) => g.status == _selectedTab).toList();
     }
+    
     if (_searchQuery.isNotEmpty) {
       final query = _searchQuery.toLowerCase();
       filtered = filtered.where((g) => 
@@ -60,6 +61,7 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
         g.username.toLowerCase().contains(query)
       ).toList();
     }
+    
     setState(() {
       _guruDitampilkan = filtered;
       _currentPage = 1;
@@ -86,35 +88,62 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
     final userCtrl = TextEditingController(text: guru?.username ?? '');
     final passCtrl = TextEditingController(); 
 
-    // Default pilihan kelas
+    // Default langsung mengarah ke Kelas SP
     String selectedKelas = guru?.kelas ?? 'Kelas sp'; 
     final List<String> daftarKelas = ['Kelas sp', 'Kelas 1', 'Kelas 2', 'Kelas 3', 'Kelas 4'];
 
-    // Validasi pencegahan error jika data lama kelasnya tidak ada di daftar
     if (!daftarKelas.contains(selectedKelas)) {
       selectedKelas = daftarKelas[0];
     }
 
     showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder( // Gunakan StatefulBuilder agar Dropdown bisa di-update
+      builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) {
           return AlertDialog(
-            title: Text(guru == null ? 'Tambah Akun Guru' : 'Edit Data Guru'),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: Text(
+              guru == null ? 'Tambah Akun Guru' : 'Edit Data Guru', 
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Nama Guru')),
-                  TextField(controller: nipCtrl, decoration: const InputDecoration(labelText: 'NIP / ID Guru')),
-                  
-                  // --- MENGGUNAKAN DROPDOWN UNTUK KELAS ---
+                  TextField(
+                    controller: nameCtrl, 
+                    decoration: const InputDecoration(
+                      labelText: 'Nama Lengkap Guru', 
+                      prefixIcon: Icon(Icons.person),
+                    ),
+                  ),
                   const SizedBox(height: 12),
+                  TextField(
+                    controller: nipCtrl, 
+                    decoration: const InputDecoration(
+                      labelText: 'NIP / ID Guru', 
+                      prefixIcon: Icon(Icons.badge),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  // --- PERBAIKAN DROPDOWN OVERFLOW ---
                   DropdownButtonFormField<String>(
+                    isExpanded: true, // Menambahkan ini agar dropdown menyesuaikan lebar dan tidak overflow
                     value: selectedKelas,
-                    decoration: const InputDecoration(labelText: 'Mengajar Kelas'),
+                    decoration: const InputDecoration(
+                      labelText: 'Mengajar Kelas', 
+                      prefixIcon: Icon(Icons.class_),
+                      border: OutlineInputBorder(),
+                    ),
                     items: daftarKelas.map((String kls) {
-                      return DropdownMenuItem(value: kls, child: Text(kls));
+                      return DropdownMenuItem(
+                        value: kls, 
+                        child: Text(
+                          kls == 'Kelas sp' ? 'Kelas Sifir (Persiapan)' : kls,
+                          overflow: TextOverflow.ellipsis, // Memotong teks panjang menjadi '...'
+                        ),
+                      );
                     }).toList(),
                     onChanged: (val) {
                       if (val != null) {
@@ -122,39 +151,91 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
                       }
                     },
                   ),
+                  // -----------------------------------
                   
-                  TextField(controller: userCtrl, decoration: const InputDecoration(labelText: 'Alamat Email (Username)')),
-                  if (guru == null) TextField(controller: passCtrl, decoration: const InputDecoration(labelText: 'Password'), obscureText: true),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: userCtrl, 
+                    decoration: const InputDecoration(
+                      labelText: 'Alamat Email (Username)', 
+                      prefixIcon: Icon(Icons.email),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (guru == null) 
+                    TextField(
+                      controller: passCtrl, 
+                      decoration: const InputDecoration(
+                        labelText: 'Password', 
+                        prefixIcon: Icon(Icons.lock),
+                      ), 
+                      obscureText: true,
+                    ),
                 ],
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx), 
+                child: const Text('Batal'),
+              ),
               ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF3C21F7), 
+                  foregroundColor: Colors.white,
+                ),
                 onPressed: () async {
+                  if (nameCtrl.text.isEmpty || userCtrl.text.isEmpty || (guru == null && passCtrl.text.length < 6)) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Harap lengkapi semua data dengan benar. Password min 6 karakter.'), 
+                        backgroundColor: Colors.orange,
+                      ),
+                    );
+                    return;
+                  }
+
                   Navigator.pop(ctx);
                   setState(() => _isLoading = true);
+                  
                   try {
                     if (guru == null) {
                       await _guruService.tambahGuru({
-                        'nama': nameCtrl.text, 'nip': nipCtrl.text, 
-                        'kelas': selectedKelas, // <-- Simpan dari dropdown
-                        'username': userCtrl.text, 'password': passCtrl.text, 'role': 'Guru', 'status': 'Aktif'
+                        'nama': nameCtrl.text, 
+                        'nip': nipCtrl.text, 
+                        'kelas': selectedKelas, 
+                        'username': userCtrl.text, 
+                        'password': passCtrl.text, 
+                        'role': 'guru', // Role wajib huruf kecil
+                        'status': 'Aktif'
                       });
                     } else {
                       await _guruService.updateGuru(guru.id, {
-                        'nama': nameCtrl.text, 'nip': nipCtrl.text, 
-                        'kelas': selectedKelas, // <-- Simpan dari dropdown
+                        'nama': nameCtrl.text, 
+                        'nip': nipCtrl.text, 
+                        'kelas': selectedKelas,
                         'username': userCtrl.text
                       });
                     }
                     _fetchData();
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Akun Guru berhasil disimpan!'), 
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
                   } catch (e) {
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                      );
+                    }
                     setState(() => _isLoading = false);
                   }
                 },
-                child: const Text('Simpan'),
+                child: const Text('Simpan Akun', style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],
           );
@@ -170,17 +251,35 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Reset Password'),
-        content: TextField(controller: passCtrl, decoration: const InputDecoration(labelText: 'Password Baru'), obscureText: true),
+        content: TextField(
+          controller: passCtrl, 
+          decoration: const InputDecoration(labelText: 'Password Baru'), 
+          obscureText: true,
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx), 
+            child: const Text('Batal'),
+          ),
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(ctx);
               try {
                 await _guruService.resetPassword(guru.id, passCtrl.text);
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password berhasil direset', style: TextStyle(color: Colors.white)), backgroundColor: Colors.green));
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Password berhasil direset', style: TextStyle(color: Colors.white)), 
+                      backgroundColor: Colors.green,
+                    ),
+                  );
+                }
               } catch (e) {
-                if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red));
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+                  );
+                }
               }
             },
             child: const Text('Update'),
@@ -237,9 +336,15 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Kelola Guru', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E1E24))),
+            const Text(
+              'Kelola Guru', 
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E1E24)),
+            ),
             const SizedBox(height: 6),
-            Text('Kelola data dan akun guru', style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
+            Text(
+              'Kelola data dan akun guru', 
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+            ),
           ],
         ),
         ElevatedButton.icon(
@@ -264,7 +369,11 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
         Expanded(
           child: Container(
             height: 48,
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+            decoration: BoxDecoration(
+              color: Colors.white, 
+              borderRadius: BorderRadius.circular(12), 
+              border: Border.all(color: Colors.grey.shade200),
+            ),
             child: TextField(
               onChanged: (val) {
                 setState(() { _searchQuery = val; });
@@ -314,7 +423,11 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
           alignment: Alignment.center,
           child: Text(
             '$title ($count)',
-            style: TextStyle(color: isSelected ? Colors.white : Colors.black87, fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, fontSize: 13),
+            style: TextStyle(
+              color: isSelected ? Colors.white : Colors.black87, 
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.w500, 
+              fontSize: 13,
+            ),
           ),
         ),
       ),
@@ -324,7 +437,10 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
   Widget _buildTableHeader() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(color: const Color(0xFFF3F1FF), borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F1FF), 
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: const Row(
         children: [
           Expanded(flex: 3, child: Text('Nama Guru', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF1E1E24)))),
@@ -359,7 +475,11 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
     bool isAktif = guru.status == 'Aktif';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+      decoration: BoxDecoration(
+        color: Colors.white, 
+        borderRadius: BorderRadius.circular(12), 
+        border: Border.all(color: Colors.grey.shade200),
+      ),
       child: Row(
         children: [
           Expanded(
@@ -386,8 +506,20 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
               ],
             ),
           ),
-          Expanded(flex: 2, child: Text(guru.kelas, style: const TextStyle(fontSize: 12, color: Colors.black87))), 
-          Expanded(flex: 2, child: Text(guru.username, style: const TextStyle(fontSize: 12, color: Colors.black87))),
+          Expanded(
+            flex: 2, 
+            child: Text(
+              guru.kelas == 'Kelas sp' ? 'Kelas Sifir' : guru.kelas, 
+              style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.bold),
+            ),
+          ), 
+          Expanded(
+            flex: 2, 
+            child: Text(
+              guru.username, 
+              style: const TextStyle(fontSize: 12, color: Colors.black87),
+            ),
+          ),
           Expanded(
             flex: 2,
             child: Row(
@@ -401,7 +533,11 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
                   ),
                   child: Text(
                     guru.status,
-                    style: TextStyle(color: isAktif ? const Color(0xFF4CAF50) : const Color(0xFFF44336), fontSize: 10, fontWeight: FontWeight.w700),
+                    style: TextStyle(
+                      color: isAktif ? const Color(0xFF4CAF50) : const Color(0xFFF44336), 
+                      fontSize: 10, 
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 GestureDetector(
@@ -424,7 +560,10 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text('Menampilkan $start - $end dari ${_guruDitampilkan.length} data', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+        Text(
+          'Menampilkan $start - $end dari ${_guruDitampilkan.length} data', 
+          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        ),
         Row(
           children: [
             GestureDetector(
@@ -440,9 +579,19 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
                 child: Container(
                   margin: const EdgeInsets.symmetric(horizontal: 4),
                   width: 28, height: 28,
-                  decoration: BoxDecoration(color: isActive ? const Color(0xFF3C21F7) : Colors.transparent, borderRadius: BorderRadius.circular(6)),
+                  decoration: BoxDecoration(
+                    color: isActive ? const Color(0xFF3C21F7) : Colors.transparent, 
+                    borderRadius: BorderRadius.circular(6),
+                  ),
                   alignment: Alignment.center,
-                  child: Text(page.toString(), style: TextStyle(color: isActive ? Colors.white : Colors.black87, fontWeight: isActive ? FontWeight.bold : FontWeight.normal, fontSize: 12)),
+                  child: Text(
+                    page.toString(), 
+                    style: TextStyle(
+                      color: isActive ? Colors.white : Colors.black87, 
+                      fontWeight: isActive ? FontWeight.bold : FontWeight.normal, 
+                      fontSize: 12,
+                    ),
+                  ),
                 ),
               );
             }),
@@ -460,7 +609,10 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
   Widget _buildInfoBanner() {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: const Color(0xFFF8F7FF), borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F7FF), 
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -470,11 +622,20 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Informasi', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1E1E24))),
+                const Text(
+                  'Informasi', 
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF1E1E24)),
+                ),
                 const SizedBox(height: 8),
-                Text('Kelola akun guru untuk mengatur akses ke aplikasi.', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                Text(
+                  'Kelola akun guru untuk mengatur akses ke aplikasi.', 
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
                 const SizedBox(height: 4),
-                Text('Pastikan data guru sudah benar sebelum membuat akun.', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                Text(
+                  'Akun baru secara otomatis akan diarahkan ke Kelas SP (Persiapan).', 
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
               ],
             ),
           )
@@ -495,12 +656,18 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
             ListTile(
               leading: const Icon(Icons.edit, color: Colors.black87),
               title: const Text('Edit Data Guru'),
-              onTap: () { Navigator.pop(context); _showFormDialog(guru: guru); },
+              onTap: () { 
+                Navigator.pop(context); 
+                _showFormDialog(guru: guru); 
+              },
             ),
             ListTile(
               leading: const Icon(Icons.lock_reset, color: Colors.orange),
               title: const Text('Reset Password'),
-              onTap: () { Navigator.pop(context); _showResetPasswordDialog(guru); },
+              onTap: () { 
+                Navigator.pop(context); 
+                _showResetPasswordDialog(guru); 
+              },
             ),
             ListTile(
               leading: Icon(guru.status == 'Aktif' ? Icons.block : Icons.check_circle, color: Colors.blue),
@@ -533,7 +700,10 @@ class _KelolaGuruScreenState extends State<KelolaGuruScreen> {
         title: const Text('Hapus Guru'),
         content: Text('Anda yakin ingin menghapus data ${guru.nama}? Data yang dihapus tidak dapat dikembalikan.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx), 
+            child: const Text('Batal'),
+          ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () async {

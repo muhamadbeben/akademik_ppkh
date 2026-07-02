@@ -1,3 +1,5 @@
+// File: lib/screens/prediksi_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -20,7 +22,7 @@ class PrediksiScreen extends StatefulWidget {
 }
 
 class _PrediksiScreenState extends State<PrediksiScreen> {
-  // ─── Controllers (Sekarang Semua Otomatis & Read-Only) ──────────────────────
+  // ─── Controllers (Sekarang Bisa Diedit Manual) ──────────────────────────────
   final TextEditingController _hafalanCtrl = TextEditingController();
   final TextEditingController _kehadiranCtrl = TextEditingController();
   final TextEditingController _akademikCtrl = TextEditingController();
@@ -126,7 +128,10 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         }
       }
       
-      final list = await FirestoreService.getSantriList();
+      final list = await FirestoreService.getSantriList(
+        kelas: _isAdmin ? null : _selectedKelas
+      );
+
       _allSantri = list.where((s) {
         final st = s.status.toLowerCase().trim();
         return st.contains('aktif') || st.isEmpty;
@@ -171,7 +176,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
-  // TARIK NILAI OTOMATIS: 100% Mengambil dari Input Nilai
+  // TARIK NILAI AWAL (Sebagai Default Input)
   // ══════════════════════════════════════════════════════════════════════════════
   Future<void> _tarikNilaiOtomatis(String santriId, String kelas) async {
     setState(() {
@@ -188,11 +193,9 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         final kehadiran = _toDouble(d['nilai_kehadiran']);
         final perilaku = _toDouble(d['nilai_perilaku']);
         
-        // Akademik hanya ditarik dari rata-rata UAS
         final avgUas = _avgMap(d['uas']);
         final akademik = avgUas;
 
-        // Hafalan Lisan ditarik otomatis dari map hafalan_kitab (hanya yang lisan)
         double totalHafalan = 0;
         int countHafalan = 0;
         if (d['hafalan_kitab'] is Map) {
@@ -207,7 +210,6 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
           });
         }
         final hafalan = countHafalan > 0 ? (totalHafalan / countHafalan) : 0.0;
-
         final pred = d['status_prediksi_ai']?.toString() ?? '';
 
         setState(() {
@@ -219,13 +221,13 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         });
 
         if (kehadiran == 0 || akademik == 0 || perilaku == 0 || hafalan == 0) {
-          _snack('⚠️ Terdapat nilai yang masih kosong di menu Input Nilai.', Colors.orange);
+          _snack('⚠️ Ada nilai yang kosong. Silakan input manual nilainya.', Colors.orange);
         } else {
-          _snack('✅ Semua nilai berhasil ditarik otomatis. Silakan jalankan AI.', Colors.green);
+          _snack('✅ Nilai berhasil dimuat. Silakan sesuaikan atau langsung jalankan AI.', Colors.green);
         }
       } else {
         _bersihkan();
-        _snack('⚠️ Belum ada data nilai untuk santri ini di kelas $_selectedKelas.', Colors.orange);
+        _snack('⚠️ Belum ada data otomatis. Silakan ketik nilai secara manual.', Colors.orange);
       }
     } catch (e) {
       _snack('Gagal tarik data: $e', Colors.red);
@@ -253,7 +255,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
   Future<void> _prosesPrediksi() async {
     if (_hafalanCtrl.text.trim().isEmpty || _kehadiranCtrl.text.trim().isEmpty ||
         _akademikCtrl.text.trim().isEmpty || _perilakuCtrl.text.trim().isEmpty) {
-      _snack('⚠️ Seluruh parameter nilai harus lengkap sebelum AI bisa dijalankan.', Colors.orange);
+      _snack('⚠️ Seluruh parameter nilai harus diisi (ketik manual) sebelum AI bisa dijalankan.', Colors.orange);
       return;
     }
 
@@ -501,24 +503,24 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
 
         if (_selectedSantriId.isNotEmpty) ...[
           const SizedBox(height: 24),
-          _stepLabel('3', 'Parameter AI (Diambil Otomatis)'),
+          _stepLabel('3', 'Input Parameter AI'), // Judul Diubah
           const SizedBox(height: 10),
 
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
             decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.blue.shade100)),
             child: Row(children: [
-              Icon(Icons.sync_rounded, color: Colors.blue[800], size: 16),
+              Icon(Icons.edit_note_rounded, color: Colors.blue[800], size: 16),
               const SizedBox(width: 8),
-              Expanded(child: Text('Data terkunci. Mengambil langsung dari rata-rata Input Nilai di menu akademik.', style: TextStyle(fontSize: 11, color: Colors.blue[900], fontWeight: FontWeight.w500))),
+              Expanded(child: Text('Ketik manual nilai santri di bawah ini, atau gunakan data otomatis jika sudah tersedia.', style: TextStyle(fontSize: 11, color: Colors.blue[900], fontWeight: FontWeight.w500))),
             ]),
           ),
           const SizedBox(height: 12),
 
-          _buildFieldManual(label: 'Nilai Hafalan (Rata-rata Lisan)', hint: 'Belum terisi', icon: Icons.menu_book_rounded, ctrl: _hafalanCtrl),
-          _buildFieldManual(label: 'Kehadiran (%)', hint: 'Belum terisi', icon: Icons.co_present_rounded, ctrl: _kehadiranCtrl),
-          _buildFieldManual(label: 'Nilai Akademik (Rata-rata UAS)', hint: 'Belum terisi', icon: Icons.school_rounded, ctrl: _akademikCtrl),
-          _buildFieldManual(label: 'Nilai Perilaku / Akhlak', hint: 'Belum terisi', icon: Icons.emoji_emotions_rounded, ctrl: _perilakuCtrl),
+          _buildFieldManual(label: 'Hafalan Kitab (Lisan)', hint: 'Ketik hafalan Kitab...', icon: Icons.menu_book_rounded, ctrl: _hafalanCtrl),
+          _buildFieldManual(label: 'Kehadiran (%)', hint: 'Ketik persentase kehadiran...', icon: Icons.co_present_rounded, ctrl: _kehadiranCtrl),
+          _buildFieldManual(label: 'Nilai Akademik (Rata-rata UAS)', hint: 'Ketik nilai akademik...', icon: Icons.school_rounded, ctrl: _akademikCtrl),
+          _buildFieldManual(label: 'Nilai Perilaku / Akhlak', hint: 'Ketik nilai perilaku...', icon: Icons.emoji_emotions_rounded, ctrl: _perilakuCtrl),
 
           const SizedBox(height: 20),
           _stepLabel('4', 'Jalankan Analisis'),
@@ -557,27 +559,22 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
           Icon(icon, size: 14, color: Colors.grey[700]),
           const SizedBox(width: 6),
           Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.grey[700])),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.grey.shade300)),
-            child: Text('🔄 Otomatis', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.grey[600])),
-          ),
         ]),
         const SizedBox(height: 5),
         TextField(
           controller: ctrl,
-          readOnly: true,
-          keyboardType: TextInputType.none,
+          readOnly: false, // DIUBAH: Sekarang bisa diketik bebas
+          keyboardType: const TextInputType.numberWithOptions(decimal: true), // DIUBAH: Menggunakan keyboard angka
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.grey[800]),
           decoration: InputDecoration(
-            hintText: hint, hintStyle: TextStyle(color: Colors.grey[400], fontSize: 12),
-            filled: true, fillColor: Colors.grey.shade100,
+            hintText: hint, 
+            hintStyle: TextStyle(color: Colors.grey[400], fontSize: 12),
+            filled: true, 
+            fillColor: Colors.white, // DIUBAH: Latar belakang putih menandakan bisa diedit
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
             enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
-            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.grey.shade300)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: Colors.blue.shade400, width: 2)), // Highlight saat diklik
             contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-            suffixIcon: const Icon(Icons.lock_outline, size: 16, color: Colors.grey),
           ),
         ),
       ]),
@@ -594,7 +591,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         gradient: LinearGradient(colors: isNegatif ? [Colors.red.shade50, Colors.red.shade100] : [Colors.green.shade50, Colors.green.shade100], begin: Alignment.topLeft, end: Alignment.bottomRight),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: isNegatif ? Colors.red.shade200 : Colors.green.shade200, width: 2),
-        boxShadow: [BoxShadow(color: Colors.grey.withValues(alpha: 0.2), blurRadius: 10, offset: const Offset(0, 5))],
+        boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 10, offset: const Offset(0, 5))],
       ),
       child: Column(children: [
         Icon(isNegatif ? Icons.cancel_rounded : Icons.check_circle_rounded, size: 52, color: isNegatif ? Colors.red[700] : Colors.green[700]),

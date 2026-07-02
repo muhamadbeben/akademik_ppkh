@@ -104,11 +104,24 @@ class FirestoreService {
 
   // ============ MANAJEMEN SANTRI ============
 
-  static Future<List<SantriModel>> getSantriList() async {
+  // [SUDAH DIPERBAIKI]: Menerima parameter opsional kelas dan status
+  static Future<List<SantriModel>> getSantriList({String? kelas, String? status}) async {
     try {
-      final snapshot = await _db.collection('santri').get();
+      Query query = _db.collection('santri');
+
+      // Filter Data Berdasarkan Kelas (Khusus Guru)
+      if (kelas != null && kelas.isNotEmpty) {
+        query = query.where('kelas', isEqualTo: kelas);
+      }
+      
+      // Filter Data Berdasarkan Status
+      if (status != null && status.isNotEmpty) {
+        query = query.where('status', isEqualTo: status);
+      }
+
+      final snapshot = await query.get();
       return snapshot.docs.map((doc) {
-        final data = doc.data();
+        final data = doc.data() as Map<String, dynamic>;
         return SantriModel.fromMap(data, doc.id); 
       }).toList();
     } catch (e) {
@@ -117,11 +130,30 @@ class FirestoreService {
     }
   }
 
+  // [FITUR BARU]: Real-Time Stream yang lebih optimal (difilter dari Firebase)
+  static Stream<List<SantriModel>> streamSantriList({String? kelas, String? status}) {
+    Query query = _db.collection('santri');
+
+    if (kelas != null && kelas.isNotEmpty) {
+      query = query.where('kelas', isEqualTo: kelas);
+    }
+    
+    if (status != null && status.isNotEmpty) {
+      query = query.where('status', isEqualTo: status);
+    }
+
+    return query.snapshots().map((snapshot) {
+      return snapshot.docs.map((doc) {
+        return SantriModel.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+      }).toList();
+    });
+  }
+
   static Future<SantriModel?> getSantriById(String id) async {
     try {
       final doc = await _db.collection('santri').doc(id).get();
       if (doc.exists) {
-        final data = doc.data()!;
+        final data = doc.data() as Map<String, dynamic>;
         return SantriModel.fromMap(data, doc.id);
       }
       return null;
@@ -164,7 +196,9 @@ class FirestoreService {
 
   static Future<List<SantriModel>> cariSantri(String query) async {
     try {
-      final allSantri = await getSantriList();
+      // PERHATIAN: cariSantri mungkin perlu disesuaikan nanti jika data sangat banyak.
+      // Untuk sementara, tetap mengambil semua data santri dan difilter di lokal.
+      final allSantri = await getSantriList(); 
       final q = query.toLowerCase();
       
       return allSantri.where((s) =>
@@ -240,7 +274,7 @@ class FirestoreService {
           .get();
           
       return snapshot.docs.map((doc) {
-        final data = doc.data();
+        final data = doc.data() as Map<String, dynamic>;
         // PERBAIKAN SINKRONISASI 2 ARGUMEN POSITIONAL
         return JadwalPelajaranModel.fromMap(data, doc.id);
       }).toList();
@@ -257,7 +291,7 @@ class FirestoreService {
           .get();
           
       return snapshot.docs.map((doc) {
-        final data = doc.data();
+        final data = doc.data() as Map<String, dynamic>;
         // PERBAIKAN SINKRONISASI 2 ARGUMEN POSITIONAL
         return JadwalPelajaranModel.fromMap(data, doc.id);
       }).toList();

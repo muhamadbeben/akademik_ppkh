@@ -2,7 +2,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:cloud_firestore/cloud_firestore.dart'; // Impor Firebase untuk Batch Kenaikan Kelas
+import 'package:cloud_firestore/cloud_firestore.dart'; 
+import 'package:firebase_auth/firebase_auth.dart'; // [TAMBAHAN]: Untuk mengecek sesi login
 import 'package:akademik_ppkh/models/santri_model.dart';
 import 'package:akademik_ppkh/services/firestore_service.dart';
 import 'package:akademik_ppkh/widgets/custom_textfield.dart';
@@ -25,6 +26,10 @@ class _SantriScreenState extends State<SantriScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _filterStatus = 'Semua';
 
+  // [TAMBAHAN]: Variabel untuk menyimpan profil user yang sedang login
+  String _roleUser = 'admin'; 
+  String _kelasGuru = '';
+
   @override
   void initState() {
     super.initState();
@@ -34,7 +39,22 @@ class _SantriScreenState extends State<SantriScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      _santriList = await FirestoreService.getSantriList();
+      // [TAMBAHAN]: Cek Role & Kelas dari User yang Login
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final userDoc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        if (userDoc.exists) {
+          _roleUser = userDoc.data()?['role'] ?? 'admin';
+          _kelasGuru = userDoc.data()?['kelas'] ?? '';
+        }
+      }
+
+      // [TAMBAHAN]: Logika Pembatasan Pengambilan Data
+      // Jika guru dan punya kelas, hanya request data kelas tersebut. Jika tidak (admin), parameter = null (ambil semua).
+      String? filterKelas = (_roleUser == 'guru' && _kelasGuru.isNotEmpty) ? _kelasGuru : null;
+
+      // Panggil service yang sudah diperbaiki sebelumnya
+      _santriList = await FirestoreService.getSantriList(kelas: filterKelas);
       _filteredList = List.from(_santriList);
     } catch (e) {
       _showSnackBar('Gagal memuat data: $e', Colors.red);
@@ -45,6 +65,12 @@ class _SantriScreenState extends State<SantriScreen> {
 
   /// FUNGSI OTOMATIS KENAIKAN KELAS MASSAL (SINKRONISASI SKRIPSI PONPES)
   Future<void> _prosesKenaikanKelasMassal() async {
+    // Keamanan ekstra: Cegah guru menaikkan kelas massal, hanya admin yang boleh
+    if (_roleUser != 'admin') {
+      _showSnackBar('Akses ditolak! Hanya Admin yang bisa memproses Kenaikan Kelas Massal.', Colors.red);
+      return;
+    }
+
     bool confirm = await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -74,7 +100,6 @@ class _SantriScreenState extends State<SantriScreen> {
     try {
       final batch = FirebaseFirestore.instance.batch();
       
-      // Ambil data santri yang statusnya masih 'Aktif' saja dari Firestore
       final querySnapshot = await FirebaseFirestore.instance
           .collection('santri')
           .where('status', isEqualTo: 'Aktif')
@@ -86,16 +111,14 @@ class _SantriScreenState extends State<SantriScreen> {
         String kelasBaru = kelasSekarang;
         String statusBaru = 'Aktif';
 
-        // Aturan pergeseran kelas otomatis Ponpes Khoirul Huda
         if (kelasSekarang == 'Kelas sp') kelasBaru = 'Kelas 1';
         else if (kelasSekarang == 'Kelas 1') kelasBaru = 'Kelas 2';
         else if (kelasSekarang == 'Kelas 2') kelasBaru = 'Kelas 3';
         else if (kelasSekarang == 'Kelas 3') kelasBaru = 'Kelas 4';
         else if (kelasSekarang == 'Kelas 4') {
-          statusBaru = 'Lulus'; // Otomatis lulus setelah kelas 4 purna
+          statusBaru = 'Lulus'; 
         }
 
-        // Masukkan ke rencana batch update jika ada perubahan data
         if (kelasBaru != kelasSekarang || statusBaru != 'Aktif') {
           batch.update(doc.reference, {
             'kelas': kelasBaru,
@@ -107,13 +130,13 @@ class _SantriScreenState extends State<SantriScreen> {
       }
 
       if (counter > 0) {
-        await batch.commit(); // Eksekusi massal sekaligus
+        await batch.commit(); 
         _showSnackBar('Alhamdulillah! Berhasil menaikkan kelas $counter santri.', Colors.green);
       } else {
         _showSnackBar('Tidak ada data santri aktif yang bisa diproses.', Colors.orange);
       }
 
-      _loadData(); // Reload data santri terbaru ke layar aplikasi
+      _loadData(); 
     } catch (e) {
       _showSnackBar('Gagal memproses kenaikan kelas: $e', Colors.red);
     } finally {
@@ -205,13 +228,14 @@ class _SantriScreenState extends State<SantriScreen> {
             fontSize: 18,
           ),
         ),
-        // AKSI APPBAR: TOMBOL KENAIKAN KELAS MASSAL OTOMATIS
         actions: [
-          IconButton(
-            icon: const Icon(Icons.trending_up_rounded, color: Color(0xFF5D38F5)),
-            tooltip: 'Kenaikan Kelas Otomatis',
-            onPressed: _isLoading ? null : _prosesKenaikanKelasMassal,
-          ),
+          // Sembunyikan ikon massal jika dia hanya guru
+          if (_roleUser == 'admin')
+            IconButton(
+              icon: const Icon(Icons.trending_up_rounded, color: Color(0xFF5D38F5)),
+              tooltip: 'Kenaikan Kelas Otomatis',
+              onPressed: _isLoading ? null : _prosesKenaikanKelasMassal,
+            ),
           const SizedBox(width: 8),
         ],
       ),
@@ -513,7 +537,7 @@ class _SantriScreenState extends State<SantriScreen> {
                     const Text('Data Akademik', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF5D38F5))),
                     const SizedBox(height: 10),
                     _detailRow('Kelas', santri.kelas == 'Kelas sp' ? 'Kelas Santri (Persiapan)' : santri.kelas, Icons.class_),
-                    _detailRow('Asrama', santri.asrama, Icons.hotel), // KOLOM KAMAR DIHAPUS DARI DETAIL
+                    _detailRow('Asrama', santri.asrama, Icons.hotel), 
                     _detailRow('Tahun Masuk', santri.tahunMasuk, Icons.date_range),
                     _detailRow('Status', santri.status, Icons.info_outline),
                     
@@ -583,11 +607,15 @@ class _SantriScreenState extends State<SantriScreen> {
     String hubunganWali = santri?.hubunganWali ?? 'Ayah';
     String asrama = santri?.asrama ?? 'Asrama Putera A';
     
-    // Default form ke Kls 1 jika data baru
+    // [TAMBAHAN]: Set kelas default & paksa kunci form jika itu adalah guru
     String kelas = _dbKelasList[1]; 
     if (santri != null && _dbKelasList.contains(santri.kelas)) {
       kelas = santri.kelas;
+    } else if (_roleUser == 'guru' && _kelasGuru.isNotEmpty) {
+      kelas = _kelasGuru; // Paksa inputan baru ke kelas milik guru tersebut
     }
+
+    bool isGuru = (_roleUser == 'guru'); // Flag untuk mengunci dropdown
 
     final formKey = GlobalKey<FormState>();
 
@@ -702,16 +730,20 @@ class _SantriScreenState extends State<SantriScreen> {
                           ),
                           const SizedBox(height: 12),
                           
-                          // SELEKTOR KELAS KUNCI PONPES KHAS
+                          // [TAMBAHAN]: PENGUNCIAN KELAS UNTUK GURU
                           DropdownButtonFormField<String>(
-                            value: kelas,
+                            value: _dbKelasList.contains(kelas) ? kelas : (_kelasGuru.isNotEmpty ? _kelasGuru : _dbKelasList[0]),
                             decoration: const InputDecoration(labelText: 'Kelas', border: OutlineInputBorder(), prefixIcon: Icon(Icons.class_)),
-                            items: _dbKelasList.map((e) => DropdownMenuItem(value: e, child: Text(e == 'Kls sp' ? 'Kelas Sifir (Persiapan)' : e))).toList(),
-                            onChanged: (v) => setModalState(() => kelas = v!),
+                            // Jika Guru: Pilihan cuma kelasnya sendiri. Jika Admin: Tampilkan semua.
+                            items: isGuru 
+                                ? [DropdownMenuItem(value: _kelasGuru, child: Text(_kelasGuru == 'Kelas sp' ? 'Kelas Sifir (Persiapan)' : _kelasGuru))]
+                                : _dbKelasList.map((e) => DropdownMenuItem(value: e, child: Text(e == 'Kelas sp' ? 'Kelas Sifir (Persiapan)' : e))).toList(),
+                            // Matikan tombol pilih (disable/null) jika dia guru, biarkan bisa diganti kalau admin
+                            onChanged: isGuru 
+                                ? null 
+                                : (v) => setModalState(() => kelas = v!),
                           ),
                           const SizedBox(height: 12),
-                          
-                          // TEXTFIELD KAMAR DIHAPUS TOTAL SESUAI REKUES
                           
                           DropdownButtonFormField<String>(
                             value: status,
@@ -767,7 +799,7 @@ class _SantriScreenState extends State<SantriScreen> {
                                     nama: namaCtrl.text,
                                     kelas: kelas,
                                     asrama: asrama,
-                                    kamar: '', // Kamar dikosongkan total aman brader
+                                    kamar: '', 
                                     status: status,
                                     jenisKelamin: jk,
                                     tempatLahir: tempatLahirCtrl.text,

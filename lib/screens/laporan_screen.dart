@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/date_symbol_data_local.dart'; // [TAMBAHAN]: Import untuk inisialisasi tanggal lokal
 
 import '../models/santri_model.dart';
 import '../services/firestore_service.dart';
@@ -18,6 +20,10 @@ class _LaporanScreenState extends State<LaporanScreen> {
   List<SantriModel> _allSantriList = [];
   List<SantriModel> _filteredSantriList = [];
   bool _isLoading = true;
+
+  // ROLE BASED ACCESS
+  bool _isGuruMode = false;
+  String _kelasGuru = '';
 
   String _selectedTahunAjaran = '2025/2026';
   String _selectedKelas = 'Semua Kelas';
@@ -44,24 +50,40 @@ class _LaporanScreenState extends State<LaporanScreen> {
   @override
   void initState() {
     super.initState();
-    _fetchFirebaseData();
+    _checkRoleAndFetchData();
   }
 
-  // Menarik master data dari Firebase
-  Future<void> _fetchFirebaseData() async {
+  Future<void> _checkRoleAndFetchData() async {
     setState(() => _isLoading = true);
     try {
-      // 1. Ambil SEMUA data santri (termasuk yang tidak aktif / lulus / sudah pindah kelas)
-      // agar histori nilai masa lalu tetap bisa dihubungkan dengan namanya.
-      _allSantriList = await FirestoreService.getSantriList();
+      // 1. Cek User yang sedang login
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        if (doc.exists) {
+          final data = doc.data()!;
+          final role = data['role']?.toString().toLowerCase() ?? 'admin';
+          
+          if (role == 'guru') {
+            _isGuruMode = true;
+            _kelasGuru = data['kelas']?.toString() ?? 'Kelas 1';
+            _selectedKelas = _kelasGuru; // Paksa & kunci kelasnya
+          }
+        }
+      }
+
+      // 2. Ambil SEMUA data santri (termasuk yang tidak aktif / lulus / pindah)
+      _allSantriList = await FirestoreService.getSantriList(
+        kelas: _isGuruMode ? _kelasGuru : null
+      );
       
       if (mounted) {
-        // 2. Terapkan filter berdasarkan histori nilai yang ada di database
+        // 3. Terapkan filter berdasarkan histori nilai yang ada di database
         await _applyFilters();
       }
     } catch (e) {
       if (mounted) setState(() => _isLoading = false);
-      _showSnackBar('Gagal membuat data master Firestore: $e', Colors.red);
+      _showSnackBar('Gagal memuat data laporan: $e', Colors.red);
     }
   }
 
@@ -170,6 +192,9 @@ class _LaporanScreenState extends State<LaporanScreen> {
     );
 
     try {
+      // [PERBAIKAN]: Inisialisasi locale data bahasa Indonesia sebelum melakukan export PDF
+      await initializeDateFormatting('id_ID', null);
+
       final pdfService = LaporanPdfService();
       
       // Deteksi Eksekusi PDF Sesuai Kategori
@@ -180,7 +205,6 @@ class _LaporanScreenState extends State<LaporanScreen> {
           tahunAjaran: _selectedTahunAjaran
         );
       } else {
-        // Untuk Laporan AI, langsung lempar santriList, Service yang akan menarik riwayat AI-nya
         await pdfService.generateLaporanPrediksiAI(
           santriList: _filteredSantriList, 
           kelas: _selectedKelas, 
@@ -263,7 +287,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 16),
-              const Text('Pilih Fokus Santri', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+              const Text('Pilih Fokus Santri', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               Expanded(
                 child: ListView.builder(
@@ -354,11 +378,45 @@ class _LaporanScreenState extends State<LaporanScreen> {
                 children: [
                   Row(
                     children: [
-                      _buildDropdownItem(
-                        label: 'Kelas Pengajian',
-                        value: _selectedKelas,
-                        onTap: () => _showPicker('Pilih Kelas', _listKelas, (val) => _selectedKelas = val),
-                      ),
+                      if (_isGuruMode)
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('Kelas Anda', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                const SizedBox(height: 2),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        _kelasGuru, 
+                                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black54), 
+                                        overflow: TextOverflow.ellipsis, 
+                                        maxLines: 1,
+                                      ),
+                                    ),
+                                    const Icon(Icons.lock, size: 14, color: Colors.grey),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        _buildDropdownItem(
+                          label: 'Kelas Pengajian',
+                          value: _selectedKelas,
+                          onTap: () => _showPicker('Pilih Kelas', _listKelas, (val) => _selectedKelas = val),
+                        ),
+                        
                       const SizedBox(width: 8),
                       _buildDropdownItem(
                         label: 'Tahun Ajaran',
