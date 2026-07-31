@@ -96,7 +96,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
       final santriData = santriDoc.data()!;
       _namaAnak = santriData['nama'] ?? 'Santri';
 
-      // PERBAIKAN: Cari dokumen nilai yang tersimpan untuk santri ini di tahun ajaran aktif, 
+      // PERBAIKAN: Cari dokumen nilai yang tersimpan untuk santri ini di tahun ajaran aktif,
       // agar meskipun kelas di master santri sudah berubah, hasil kelas sebelumnya tetap ketemu.
       final nilaiQuery = await FirebaseFirestore.instance
           .collection('nilai')
@@ -110,8 +110,8 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         // Ambil data nilai yang relevan (misal kelas sp atau kelas evaluasi terakhir)
         final nilaiData = nilaiQuery.docs.first.data();
         _kelasAnak = nilaiData['kelas'] ?? santriData['kelas'] ?? '';
-        
-        final pred = nilaiData['status_prediksi_ai']?.toString() ?? '';
+
+        final pred = nilaiData['status_prediksi_kelulusan']?.toString() ?? '';
         setState(() {
           _hasilPrediksi = pred.isNotEmpty ? pred : '';
         });
@@ -149,12 +149,12 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
           }
         }
       }
-      
+
       await _fetchDataSantri();
     } catch (e) {
       debugPrint('_checkRoleAndLoadSantri error: $e');
       if (mounted) setState(() => _isFetching = false);
-    } 
+    }
   }
 
   Future<void> _fetchDataSantri() async {
@@ -170,7 +170,8 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
       final snapshot = await query.get();
 
       final Set<String> santriIdsWithGrades = snapshot.docs
-          .map((doc) => (doc.data() as Map<String, dynamic>)['santriId'].toString())
+          .map((doc) =>
+              (doc.data() as Map<String, dynamic>)['santriId'].toString())
           .toSet();
 
       _allSantri = list.where((s) {
@@ -221,14 +222,14 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
       _isFetching = true;
       _hasilPrediksi = '';
     });
-    
+
     try {
       final String idDokumen = _docId(santriId, kelas);
       final snap = await FirebaseFirestore.instance
           .collection('nilai')
           .doc(idDokumen)
           .get();
-          
+
       if (!mounted) return;
 
       if (snap.exists && snap.data() != null) {
@@ -238,25 +239,44 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         final perilaku = _toDouble(d['nilai_perilaku']);
         final akademik = _toDouble(d['rata_rata_uas']);
         final hafalan = _toDouble(d['rata_rata_hafalan']);
-        
-        final pred = d['status_prediksi_ai']?.toString() ?? '';
+
+        final pred = d['status_prediksi_kelulusan']?.toString() ?? '';
 
         setState(() {
-          _kehadiranCtrl.text = kehadiran > 0 ? (kehadiran % 1 == 0 ? kehadiran.toInt().toString() : kehadiran.toStringAsFixed(1)) : '';
-          _akademikCtrl.text = akademik > 0 ? (akademik % 1 == 0 ? akademik.toInt().toString() : akademik.toStringAsFixed(1)) : '';
-          _perilakuCtrl.text = perilaku > 0 ? (perilaku % 1 == 0 ? perilaku.toInt().toString() : perilaku.toStringAsFixed(1)) : '';
-          _hafalanCtrl.text = hafalan > 0 ? (hafalan % 1 == 0 ? hafalan.toInt().toString() : hafalan.toStringAsFixed(1)) : '';
+          _kehadiranCtrl.text = kehadiran > 0
+              ? (kehadiran % 1 == 0
+                  ? kehadiran.toInt().toString()
+                  : kehadiran.toStringAsFixed(1))
+              : '';
+          _akademikCtrl.text = akademik > 0
+              ? (akademik % 1 == 0
+                  ? akademik.toInt().toString()
+                  : akademik.toStringAsFixed(1))
+              : '';
+          _perilakuCtrl.text = perilaku > 0
+              ? (perilaku % 1 == 0
+                  ? perilaku.toInt().toString()
+                  : perilaku.toStringAsFixed(1))
+              : '';
+          _hafalanCtrl.text = hafalan > 0
+              ? (hafalan % 1 == 0
+                  ? hafalan.toInt().toString()
+                  : hafalan.toStringAsFixed(1))
+              : '';
           _hasilPrediksi = pred;
         });
 
         if (kehadiran == 0 && akademik == 0 && perilaku == 0 && hafalan == 0) {
-          _snack('⚠️ Dokumen nilai ditemukan, tapi semua nilainya masih 0.', Colors.orange);
+          _snack('⚠️ Dokumen nilai ditemukan, tapi semua nilainya masih 0.',
+              Colors.orange);
         } else {
           _snack('✅ Nilai otomatis berhasil dimuat!', Colors.green);
         }
       } else {
         _bersihkan();
-        _snack('⚠️ Belum ada nilai tersimpan untuk santri ini di TA $_tahunAjaran.', Colors.red);
+        _snack(
+            '⚠️ Belum ada nilai tersimpan untuk santri ini di TA $_tahunAjaran.',
+            Colors.red);
       }
     } catch (e) {
       _snack('Gagal menarik data dari server: $e', Colors.red);
@@ -276,8 +296,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         _kehadiranCtrl.text.trim().isEmpty ||
         _akademikCtrl.text.trim().isEmpty ||
         _perilakuCtrl.text.trim().isEmpty) {
-      _snack(
-          '⚠️ Seluruh parameter nilai harus terisi sebelum AI dijalankan.',
+      _snack('⚠️ Seluruh parameter nilai harus terisi sebelum AI dijalankan.',
           Colors.orange);
       return;
     }
@@ -310,7 +329,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
             .collection('nilai')
             .doc(_docId(_selectedSantriId, _selectedKelas))
             .set({
-          'status_prediksi_ai': teksHasil,
+          'status_prediksi_kelulusan': teksHasil,
           'updatedAt': FieldValue.serverTimestamp(),
         }, SetOptions(merge: true));
       }
@@ -320,7 +339,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
       _snack('✅ Prediksi Kelulusan berhasil dijalankan!', Colors.green);
     } catch (e) {
       if (!mounted) return;
-      _snack('Terjadi kesalahan Kelulusan: $e', Colors.red);
+      _snack('Terjadi kesalahan Prediksi Kelulusan: $e', Colors.red);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -328,12 +347,8 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
 
   String _getCatatan() {
     final k = _isWali ? _kelasAnak : _selectedKelas;
-    final bukan4 = [
-      'kelas sp',
-      'kelas 1',
-      'kelas 2',
-      'kelas 3'
-    ].contains(k.toLowerCase().trim());
+    final bukan4 = ['kelas sp', 'kelas 1', 'kelas 2', 'kelas 3']
+        .contains(k.toLowerCase().trim());
     if (!bukan4) return '';
     if (_hasilPrediksi.contains('NAIK KELAS')) {
       return 'Alhamdulillah! Pertahankan semangat hafalan dan belajarnya. 🌟';
@@ -375,7 +390,8 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
           const SizedBox(height: 8),
           Expanded(
             child: _filteredSantri.isEmpty
-                ? const Center(child: Text('Tidak ada riwayat nilai santri di kelas ini'))
+                ? const Center(
+                    child: Text('Tidak ada riwayat nilai santri di kelas ini'))
                 : ListView.builder(
                     itemCount: _filteredSantri.length,
                     itemBuilder: (_, idx) {
@@ -388,10 +404,11 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
                                     color: Colors.blue,
                                     fontWeight: FontWeight.bold))),
                         title: Text(santri.nama,
-                            style: const TextStyle(fontWeight: FontWeight.w600)),
-                        subtitle: Text('NIS: ${santri.nis}',
                             style:
-                                TextStyle(color: Colors.grey[600], fontSize: 12)),
+                                const TextStyle(fontWeight: FontWeight.w600)),
+                        subtitle: Text('NIS: ${santri.nis}',
+                            style: TextStyle(
+                                color: Colors.grey[600], fontSize: 12)),
                         onTap: () {
                           Navigator.pop(ctx);
                           setState(() {
@@ -429,13 +446,11 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
       ),
       body: _isFetching
           ? const Center(
-              child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('Mengambil data...', style: TextStyle(color: Colors.grey))
-                ]))
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Mengambil data...', style: TextStyle(color: Colors.grey))
+            ]))
           : _isWali
               ? _buildWaliView()
               : _buildUstadzView(),
@@ -488,12 +503,12 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
       child: const Column(children: [
         Icon(Icons.hourglass_empty_rounded, color: Colors.orange, size: 48),
         SizedBox(height: 14),
-        Text('Hasil prediksi belum tersedia.',
+        Text('Hasil prediksi Kelulusan belum tersedia.',
             style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             textAlign: TextAlign.center),
         SizedBox(height: 8),
         Text(
-            'Pengurus pesantren belum menjalankan analisis kelulusan untuk anak ini.',
+            'Pengurus pesantren belum menjalankan analisis Prediksi Kelulusan untuk anak ini.',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 13, color: Colors.grey, height: 1.5)),
       ]),
@@ -562,7 +577,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
                       onChanged: (val) {
                         if (val == null) return;
                         setState(() => _selectedKelas = val);
-                        _fetchDataSantri(); 
+                        _fetchDataSantri();
                       },
                     ),
                   ),
@@ -692,7 +707,9 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
                         color: Colors.white, strokeWidth: 2))
                 : const Icon(Icons.auto_awesome, color: Colors.white),
             label: Text(
-                _isLoading ? 'Memproses...' : 'Simpan & Jalankan kelulusan ',
+                _isLoading
+                    ? 'Memproses...'
+                    : 'Simpan & Jalankan Prediksi Kelulusan',
                 style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -755,8 +772,7 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         TextField(
           controller: ctrl,
           readOnly: false,
-          keyboardType:
-              const TextInputType.numberWithOptions(decimal: true),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
           style: TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 15,
@@ -808,12 +824,8 @@ class _PrediksiScreenState extends State<PrediksiScreen> {
         ],
       ),
       child: Column(children: [
-        Icon(
-            isNegatif
-                ? Icons.cancel_rounded
-                : Icons.check_circle_rounded,
-            size: 52,
-            color: isNegatif ? Colors.red[700] : Colors.green[700]),
+        Icon(isNegatif ? Icons.cancel_rounded : Icons.check_circle_rounded,
+            size: 52, color: isNegatif ? Colors.red[700] : Colors.green[700]),
         const SizedBox(height: 12),
         Text(hasil,
             textAlign: TextAlign.center,
