@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 
 class PrediksiApiService {
   // Masukkan URL Forwarding dari Ngrok di sini, tambahkan endpoint /predict
+  // PENTING: Jika kamu merestart Ngrok di komputermu, URL ini HARUS diganti dengan yang baru.
   static const String apiUrl = "https://excuse-mammogram-marbles.ngrok-free.dev/predict"; 
 
   static Future<int> getPrediksiKelulusan({
@@ -14,7 +15,11 @@ class PrediksiApiService {
     try {
       final response = await http.post(
         Uri.parse(apiUrl),
-        headers: {"Content-Type": "application/json"},
+        headers: {
+          "Content-Type": "application/json",
+          // INI TAMBAHANNYA: Untuk mem-bypass halaman peringatan Ngrok (Browser Warning)
+          "ngrok-skip-browser-warning": "true",
+        },
         body: jsonEncode({
           "hafalan_kitab": hafalanKitab,
           "kehadiran": kehadiran,
@@ -31,7 +36,7 @@ class PrediksiApiService {
            throw Exception(data['message']);
         }
       } else {
-        throw Exception("Gagal terhubung ke API backend.");
+        throw Exception("Gagal terhubung ke API backend. Status Code: ${response.statusCode}");
       }
     } catch (e) {
       throw Exception("Error jaringan: $e");

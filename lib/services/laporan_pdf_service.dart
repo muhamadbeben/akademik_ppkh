@@ -1,14 +1,12 @@
 // File: lib/services/laporan_pdf_service.dart
 
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:path_provider/path_provider.dart';
-import 'package:open_file/open_file.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:printing/printing.dart'; 
 import '../models/santri_model.dart';
 
 class LaporanPdfService {
@@ -29,7 +27,7 @@ class LaporanPdfService {
                 child: pw.Image(pw.MemoryImage(logoBytes)),
               )
             else
-              pw.SizedBox(width: 60), // Spacer jika logo tidak ada
+              pw.SizedBox(width: 60), 
             
             pw.SizedBox(width: 15),
             
@@ -42,7 +40,7 @@ class LaporanPdfService {
                     style: pw.TextStyle(
                       fontSize: 16,
                       fontWeight: pw.FontWeight.bold,
-                      color: const PdfColor.fromInt(0xFF1B5E20), // Hijau Gelap
+                      color: const PdfColor.fromInt(0xFF1B5E20), 
                     ),
                   ),
                   pw.SizedBox(height: 2),
@@ -58,14 +56,13 @@ class LaporanPdfService {
               ),
             ),
             
-            pw.SizedBox(width: 75), // Penyeimbang logo di kanan
+            pw.SizedBox(width: 75), 
           ],
         ),
         pw.SizedBox(height: 10),
-        // Garis Ganda Kop Surat
         pw.Divider(thickness: 2, color: PdfColors.black),
         pw.Container(
-          transform: Matrix4.translationValues(0, -6, 0), // Angkat garis kedua ke atas
+          transform: Matrix4.translationValues(0, -6, 0), 
           child: pw.Divider(thickness: 1, color: PdfColors.black),
         ),
         pw.SizedBox(height: 10),
@@ -96,7 +93,7 @@ class LaporanPdfService {
           pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.center,
             children: [
-              pw.Text('Tangerang, $tglSekarang'), // Ubah kota sesuai lokasi pesantren
+              pw.Text('Tangerang, $tglSekarang'), 
               pw.Text('Wali Pengajar $kelas,'),
               pw.SizedBox(height: 60),
               pw.Text('( ________________________ )', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
@@ -119,7 +116,6 @@ class LaporanPdfService {
 
     Uint8List? logoBytes;
     try {
-      // [PERBAIKAN]: Menggunakan nama file dengan underscore sesuai di pubspec.yaml
       final ByteData data = await rootBundle.load('assets/images/logo_rapot.png');
       logoBytes = data.buffer.asUint8List();
     } catch (e) {
@@ -141,32 +137,16 @@ class LaporanPdfService {
           
           double kehadiran = double.tryParse(data['nilai_kehadiran']?.toString() ?? '0') ?? 0.0;
           double perilaku = double.tryParse(data['nilai_perilaku']?.toString() ?? '0') ?? 0.0;
-          double avgHafalan = 0.0;
-          double avgUts = 0.0;
-          double avgUas = 0.0;
-
-          if (data['uts'] is Map) {
-            double sum = 0; int count = 0;
-            (data['uts'] as Map).forEach((_, v) { sum += double.tryParse(v.toString()) ?? 0; count++; });
-            avgUts = count > 0 ? sum / count : 0.0;
-          }
-          if (data['uas'] is Map) {
-            double sum = 0; int count = 0;
-            (data['uas'] as Map).forEach((_, v) { sum += double.tryParse(v.toString()) ?? 0; count++; });
-            avgUas = count > 0 ? sum / count : 0.0;
-          }
-          if (data['hafalan_kitab'] is Map) {
-            double sum = 0; int count = 0;
-            (data['hafalan_kitab'] as Map).forEach((_, v) { sum += double.tryParse(v.toString()) ?? 0; count++; });
-            avgHafalan = count > 0 ? sum / count : 0.0;
-          }
+          double avgUts = double.tryParse(data['rata_rata_uts']?.toString() ?? '0') ?? 0.0;
+          double avgUas = double.tryParse(data['rata_rata_uas']?.toString() ?? '0') ?? 0.0;
+          double avgHafalan = double.tryParse(data['rata_rata_hafalan']?.toString() ?? '0') ?? 0.0;
 
           if (avgHafalan > 0 || avgUts > 0 || avgUas > 0) {
             validTableRows.add([
               '${validTableRows.length + 1}',
               santri.nis,
               santri.nama,
-              (data['kelas'] ?? data['semester'] ?? santri.kelas).toString(),
+              (data['kelas'] ?? santri.kelas).toString(),
               '${kehadiran.toStringAsFixed(0)}%',
               perilaku.toStringAsFixed(1),
               avgHafalan.toStringAsFixed(1),
@@ -176,7 +156,7 @@ class LaporanPdfService {
           }
         }
       } catch (e) {
-        debugPrint("Error filter santri ${santri.nama}: $e");
+        debugPrint("Error memproses data santri ${santri.nama}: $e");
       }
     }
 
@@ -184,9 +164,7 @@ class LaporanPdfService {
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4.landscape, 
         margin: const pw.EdgeInsets.all(32),
-        // HEADER SETIAP HALAMAN
         header: (context) => _buildKopSurat(logoBytes),
-        // FOOTER SETIAP HALAMAN
         footer: (context) => pw.Container(
           margin: const pw.EdgeInsets.only(top: 10),
           child: pw.Row(
@@ -198,7 +176,6 @@ class LaporanPdfService {
           ),
         ),
         build: (ctx) => [
-          // JUDUL LAPORAN
           pw.Center(
             child: pw.Column(
               children: [
@@ -210,14 +187,13 @@ class LaporanPdfService {
           ),
           pw.SizedBox(height: 20),
           
-          // TABEL DATA
           pw.TableHelper.fromTextArray(
             headers: ['No', 'NIS', 'Nama Santri', 'Kelas', 'Kehadiran', 'Perilaku', 'Nilai Hafalan', 'Rata-rata UTS', 'Rata-rata UAS'],
             data: validTableRows,
             border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
             headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 9),
             headerDecoration: const pw.BoxDecoration(color: PdfColors.indigo700),
-            oddRowDecoration: const pw.BoxDecoration(color: PdfColors.grey100), // Efek Zebra
+            oddRowDecoration: const pw.BoxDecoration(color: PdfColors.grey100),
             cellPadding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 4),
             cellStyle: const pw.TextStyle(fontSize: 8),
             columnWidths: const {
@@ -243,7 +219,6 @@ class LaporanPdfService {
             },
           ),
           
-          // TANDA TANGAN
           _buildSignatures(kelas),
         ],
       ),
@@ -253,7 +228,7 @@ class LaporanPdfService {
   }
 
   /// =========================================================================
-  /// 2. LAPORAN HASIL PREDIKSI KELULUSAN KECERDASAN BUATAN (RANDOM FOREST)
+  /// 2. LAPORAN HASIL PREDIKSI KELULUSAN AI (RANDOM FOREST)
   /// =========================================================================
   Future<void> generateLaporanPrediksiAI({
     required List<SantriModel> santriList, 
@@ -264,54 +239,53 @@ class LaporanPdfService {
 
     Uint8List? logoBytes;
     try {
-      // [PERBAIKAN]: Menggunakan nama file dengan underscore sesuai di pubspec.yaml
       final ByteData data = await rootBundle.load('assets/images/logo_rapot.png');
       logoBytes = data.buffer.asUint8List();
-    } catch (e) {}
+    } catch (e) {
+      debugPrint('Logo tidak ditemukan.');
+    }
 
     List<List<String>> validTableRows = [];
     int totalNaikKelas = 0;
     int totalTinggalKelas = 0;
+    int totalBelumDianalisis = 0;
 
     for (var santri in santriList) {
       try {
-        final prediksiQuery = await FirebaseFirestore.instance
-            .collection('prediksi')
+        // [PERBAIKAN UTAMA]: Menggunakan query berdasarkan santriId dan tahunAjaran agar aman
+        // meskipun filter kelas diatur ke "Semua Kelas" atau nama kelas bervariasi.
+        final nilaiQuery = await FirebaseFirestore.instance
+            .collection('nilai')
             .where('santriId', isEqualTo: santri.id)
+            .where('tahunAjaran', isEqualTo: tahunAjaran)
             .get();
 
-        if (prediksiQuery.docs.isNotEmpty) {
-          var docs = prediksiQuery.docs;
-          docs.sort((a, b) {
-            Timestamp? tA = a.data()['tanggalPrediksi'] as Timestamp?;
-            Timestamp? tB = b.data()['tanggalPrediksi'] as Timestamp?;
-            if (tA == null || tB == null) return 0;
-            return tB.compareTo(tA);
-          });
-
-          final data = docs.first.data();
-          String statusAI = data['hasilPrediksi']?.toString() ?? '-';
-
-          if (statusAI != '-' && statusAI.isNotEmpty) {
-            String avgAkademik = double.tryParse(data['nilaiRataRata']?.toString() ?? '0')?.toStringAsFixed(1) ?? '0.0';
-            String avgHafalan = double.tryParse(data['nilaiHafalan']?.toString() ?? '0')?.toStringAsFixed(1) ?? '0.0';
-            
-            validTableRows.add([
-              '${validTableRows.length + 1}',
-              santri.nis,
-              santri.nama,
-              avgAkademik,
-              avgHafalan,
-              statusAI,
-            ]);
-
-            // Menghitung statistik ringkasan AI
+        if (nilaiQuery.docs.isNotEmpty) {
+          final data = nilaiQuery.docs.first.data();
+          
+          String statusAI = data['status_prediksi_ai']?.toString() ?? '';
+          String avgAkademik = double.tryParse(data['rata_rata_uas']?.toString() ?? '0')?.toStringAsFixed(1) ?? '0.0';
+          String avgHafalan = double.tryParse(data['rata_rata_hafalan']?.toString() ?? '0')?.toStringAsFixed(1) ?? '0.0';
+          
+          if (statusAI.isEmpty) {
+            statusAI = 'BELUM DIANALISIS';
+            totalBelumDianalisis++;
+          } else {
             if (statusAI.toLowerCase().contains('tinggal') || statusAI.toLowerCase().contains('tidak')) {
               totalTinggalKelas++;
             } else {
               totalNaikKelas++;
             }
           }
+
+          validTableRows.add([
+            '${validTableRows.length + 1}',
+            santri.nis,
+            santri.nama,
+            avgAkademik,
+            avgHafalan,
+            statusAI,
+          ]);
         }
       } catch (e) {
         debugPrint("Error load prediksi untuk ${santri.nama}: $e");
@@ -320,7 +294,7 @@ class LaporanPdfService {
 
     pdf.addPage(
       pw.MultiPage(
-        pageFormat: PdfPageFormat.a4, // A4 Portrait lebih cocok untuk tabel ini
+        pageFormat: PdfPageFormat.a4, 
         margin: const pw.EdgeInsets.all(32),
         header: (context) => _buildKopSurat(logoBytes),
         footer: (context) => pw.Container(
@@ -360,20 +334,26 @@ class LaporanPdfService {
               children: [
                 pw.Column(
                   children: [
-                    pw.Text('Total Dievaluasi', style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
-                    pw.Text('${validTableRows.length} Santri', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+                    pw.Text('Total Santri', style: pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                    pw.Text('${validTableRows.length}', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
                   ]
                 ),
                 pw.Column(
                   children: [
-                    pw.Text('Potensi Naik / Lulus', style: pw.TextStyle(fontSize: 9, color: PdfColors.green700)),
-                    pw.Text('$totalNaikKelas Santri', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.green700)),
+                    pw.Text('Naik / Lulus', style: pw.TextStyle(fontSize: 9, color: PdfColors.green700)),
+                    pw.Text('$totalNaikKelas', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.green700)),
                   ]
                 ),
                 pw.Column(
                   children: [
-                    pw.Text('Potensi Tinggal Kelas', style: pw.TextStyle(fontSize: 9, color: PdfColors.red700)),
-                    pw.Text('$totalTinggalKelas Santri', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.red700)),
+                    pw.Text('Tinggal Kelas', style: pw.TextStyle(fontSize: 9, color: PdfColors.red700)),
+                    pw.Text('$totalTinggalKelas', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.red700)),
+                  ]
+                ),
+                pw.Column(
+                  children: [
+                    pw.Text('Belum Diproses', style: pw.TextStyle(fontSize: 9, color: PdfColors.orange700)),
+                    pw.Text('$totalBelumDianalisis', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold, color: PdfColors.orange700)),
                   ]
                 ),
               ]
@@ -382,7 +362,7 @@ class LaporanPdfService {
           pw.SizedBox(height: 15),
 
           pw.TableHelper.fromTextArray(
-            headers: ['No', 'NIS', 'Nama Santri', 'Akademik', 'Hafalan', 'Hasil Keputusan AI'],
+            headers: ['No', 'NIS', 'Nama Santri', 'Rata-rata Akademik', 'Rata-rata Hafalan', 'Keputusan Algoritma AI'],
             data: validTableRows,
             border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
             headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 9),
@@ -393,10 +373,10 @@ class LaporanPdfService {
             columnWidths: const {
               0: pw.FlexColumnWidth(0.3),
               1: pw.FlexColumnWidth(0.8),
-              2: pw.FlexColumnWidth(2.0),
+              2: pw.FlexColumnWidth(1.8),
               3: pw.FlexColumnWidth(0.8),
               4: pw.FlexColumnWidth(0.8),
-              5: pw.FlexColumnWidth(1.2),
+              5: pw.FlexColumnWidth(1.4),
             },
             cellAlignments: {
               0: pw.Alignment.center,
@@ -415,26 +395,21 @@ class LaporanPdfService {
     await _saveAndOpenFile(pdf, 'Prediksi_AI_${kelas.replaceAll(' ', '_')}');
   }
 
-  // FUNGSI UNTUK MENYIMPAN KE FOLDER EKSTERNAL (JIKA BISA) LALU MEMBUKA
+  // ===========================================================================
+  // FUNGSI PENYIMPANAN DAN BUKA FILE PDF (CROSS-PLATFORM)
+  // ===========================================================================
   Future<void> _saveAndOpenFile(pw.Document pdf, String fileNameBase) async {
     try {
-      Directory? dir;
-      if (Platform.isAndroid) {
-        dir = await getExternalStorageDirectory();
-      } 
-      dir ??= await getApplicationDocumentsDirectory();
+      final String fileName = '${fileNameBase}_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final Uint8List bytes = await pdf.save();
 
-      final file = File('${dir.path}/${fileNameBase}_${DateTime.now().millisecondsSinceEpoch}.pdf');
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: fileName,
+      );
       
-      await file.writeAsBytes(await pdf.save());
-      
-      final result = await OpenFile.open(file.path);
-      
-      if (result.type != ResultType.done) {
-        debugPrint("Gagal membuka file PDF: ${result.message}");
-      }
     } catch (e) {
-      debugPrint("Gagal menyimpan PDF: $e");
+      debugPrint("Gagal menyimpan atau membuka PDF: $e");
     }
   }
 }

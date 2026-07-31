@@ -31,24 +31,23 @@ class RaporScreen extends StatefulWidget {
 
 class _RaporScreenState extends State<RaporScreen> {
   // ─── State ────────────────────────────────────────────────────────────────────
-  List<SantriModel> _santriList     = [];
-  bool _isLoading                   = true;
+  List<SantriModel> _santriList = [];
+  bool _isLoading = true;
   
   // ROLE BASED ACCESS
-  bool _isWaliSantriMode            = false;
-  bool _isGuruMode                  = false;
-  String _kelasGuru                 = '';
+  bool _isWaliSantriMode = false;
+  bool _isGuruMode = false;
+  String _kelasGuru = '';
   
-  String _selectedKelas  = 'Semua Kelas';
-  String _selectedTahun  = '2025/2026';
+  String _selectedKelas = 'Semua Kelas';
+  String _selectedTahun = '2025/2026';
 
   Future<List<_RaporItem>>? _raporFuture;
 
-  final List<String> _kelasList  = ['Semua Kelas','Kelas sp','Kelas 1','Kelas 2','Kelas 3','Kelas 4'];
-  final List<String> _tahunList  = ['2025/2026','2024/2025','2023/2024'];
+  final List<String> _kelasList = ['Semua Kelas','Kelas sp','Kelas 1','Kelas 2','Kelas 3','Kelas 4'];
+  final List<String> _tahunList = ['2025/2026','2024/2025','2023/2024'];
   final List<String> _semuaKelas = ['Kelas sp','Kelas 1','Kelas 2','Kelas 3','Kelas 4'];
 
-  // Urutan tampilan kelas (untuk sorting)
   final List<String> _urutanKelas = ['kelas sp','kelas 1','kelas 2','kelas 3','kelas 4'];
 
   // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -62,27 +61,25 @@ class _RaporScreenState extends State<RaporScreen> {
     setState(() => _isLoading = true);
     try {
       String? targetId = widget.santriId;
-      String? role     = widget.userRole;
+      String? role = widget.userRole;
 
-      // 1. CEK ROLE USER YANG SEDANG LOGIN
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         final doc = await FirebaseFirestore.instance
             .collection('users').doc(user.uid).get();
         if (doc.exists) {
-          final d  = doc.data();
-          role     ??= d?['role']?.toString().trim().toLowerCase();
+          final d = doc.data();
+          role ??= d?['role']?.toString().trim().toLowerCase();
           targetId ??= d?['santriId']?.toString().trim();
           
           if (role == 'guru') {
             _isGuruMode = true;
             _kelasGuru = d?['kelas']?.toString() ?? 'Kelas 1';
-            _selectedKelas = _kelasGuru; // Kunci otomatis ke kelas guru
+            _selectedKelas = _kelasGuru; 
           }
         }
       }
 
-      // 2. LOAD DATA SANTRI BERDASARKAN ROLE
       if (role == 'walisantri') {
         _isWaliSantriMode = true;
         if (targetId != null && targetId.isNotEmpty) {
@@ -91,10 +88,8 @@ class _RaporScreenState extends State<RaporScreen> {
         }
       } else if (_isGuruMode) {
         _isWaliSantriMode = false;
-        // Hanya ambil santri di kelas guru tersebut (menggunakan filter dari database)
         _santriList = await FirestoreService.getSantriList(kelas: _kelasGuru);
       } else {
-        // Mode Admin: Ambil semua santri
         _isWaliSantriMode = false;
         _santriList = await FirestoreService.getSantriList();
       }
@@ -107,176 +102,158 @@ class _RaporScreenState extends State<RaporScreen> {
     }
   }
 
-  void _refresh() => setState(() { _raporFuture = _fetchSemuaRapor(); });
+  void _refresh() => setState(() { _raporFuture = _fetchSemuaRaporOptimized(); });
 
   // ══════════════════════════════════════════════════════════════════════════════
-  // FETCH RAPOR — 3 lapis strategi per santri per kelas
+  // FETCH RAPOR OPTIMIZED (Menggunakan .where() untuk memangkas waktu loading)
   // ══════════════════════════════════════════════════════════════════════════════
-  Future<List<_RaporItem>> _fetchSemuaRapor() async {
+  Future<List<_RaporItem>> _fetchSemuaRaporOptimized() async {
     if (_santriList.isEmpty) return [];
 
     final List<String> targetKelas = (_selectedKelas == 'Semua Kelas' || _isWaliSantriMode)
         ? _semuaKelas
         : [_selectedKelas];
 
-    final nested = await Future.wait(_santriList.map((santri) async {
+    final santriIds = _santriList.map((s) => s.id).toList();
+    if (santriIds.isEmpty) return [];
+
+    try {
+      // 1. Tarik data dari koleksi 'rapor' sekaligus berdasarkan tahun ajaran (jauh lebih cepat)
+      final raporSnap = await FirebaseFirestore.instance
+          .collection('rapor')
+          .where('tahunAjaran', isEqualTo: _selectedTahun)
+          .get();
+
+      // 2. Tarik data dari koleksi 'nilai' sekaligus untuk tahun ajaran aktif
+      final nilaiSnap = await FirebaseFirestore.instance
+          .collection('nilai')
+          .where('tahunAjaran', isEqualTo: _selectedTahun)
+          .get();
+
+      // Map penampung agar pencarian data kilat di memori
+      final Map<String, Map<String, dynamic>> mapRapor = {};
+      for (var doc in raporSnap.docs) {
+        mapRapor[doc.id] = doc.data();
+      }
+
+      final Map<String, Map<String, dynamic>> mapNilai = {};
+      for (var doc in nilaiSnap.docs) {
+        mapNilai[doc.id] = doc.data();
+      }
+
       final List<_RaporItem> hasil = [];
 
-      for (final kelas in targetKelas) {
-        try {
-          // Lapis 1: format baru
-          final r1 = await _bacaRaporBaru(santri.id, kelas, _selectedTahun);
-          if (r1 != null) {
-            hasil.add(_RaporItem(rapor: r1, sumber: _Sumber.raporBaru));
-            continue;
-          }
+      for (final santri in _santriList) {
+        for (final kelas in targetKelas) {
+          final kelasNorm = kelas.replaceAll(' ', '');
+          final tahunId = _selectedTahun.replaceAll('/', '');
+          final tahunDash = _selectedTahun.replaceAll('/', '-');
 
-          // Lapis 2: format lama
-          final r2 = await _bacaRaporLama(santri.id, kelas, _selectedTahun);
-          if (r2 != null) {
-            hasil.add(_RaporItem(rapor: r2, sumber: _Sumber.raporLama));
-            continue;
-          }
+          // Cek ID kandidat dokumen rapor
+          final idBaru = '${santri.id}_${kelasNorm}_$tahunId';
+          final idLama = '${santri.id}_${tahunDash}_$kelasNorm';
+          final idTemp = 'TEMP_$idLama';
 
-          // Lapis 3: dari koleksi 'nilai'
-          final r3 = await _generateDariNilai(santri, kelas, _selectedTahun);
-          if (r3 != null) {
-            hasil.add(_RaporItem(rapor: r3, sumber: _Sumber.generated));
+          if (mapRapor.containsKey(idBaru)) {
+            hasil.add(_RaporItem(rapor: _parseDoc(mapRapor[idBaru]!, idBaru), sumber: _Sumber.raporBaru));
+          } else if (mapRapor.containsKey(idLama)) {
+            hasil.add(_RaporItem(rapor: _parseDoc(mapRapor[idLama]!, idLama), sumber: _Sumber.raporBaru));
+          } else if (mapRapor.containsKey(idTemp)) {
+            hasil.add(_RaporItem(rapor: _parseDoc(mapRapor[idTemp]!, idTemp), sumber: _Sumber.raporBaru));
+          } else {
+            // Jika tidak ada di koleksi rapor, cek apakah ada di koleksi nilai untuk di-generate otomatis
+            final idNilai1 = '${santri.id}_${tahunDash}_$kelasNorm';
+            final idNilai2 = '${santri.id}_${tahunDash}_${kelas.toLowerCase().replaceAll(' ', '')}';
+
+            final dataNilai = mapNilai[idNilai1] ?? mapNilai[idNilai2];
+            if (dataNilai != null) {
+              final generatedRapor = _generateRaporDariDataNilai(santri, kelas, _selectedTahun, dataNilai);
+              if (generatedRapor != null) {
+                hasil.add(_RaporItem(rapor: generatedRapor, sumber: _Sumber.generated));
+              }
+            }
           }
-        } catch (e) {
-          debugPrint('Rapor ${santri.nama} $kelas: $e');
         }
       }
+
+      hasil.sort((a, b) {
+        final namaComp = a.rapor.namaSantri.compareTo(b.rapor.namaSantri);
+        if (namaComp != 0) return namaComp;
+        final ia = _urutanKelas.indexOf(a.rapor.kelas.toLowerCase().trim());
+        final ib = _urutanKelas.indexOf(b.rapor.kelas.toLowerCase().trim());
+        return ia.compareTo(ib);
+      });
+
       return hasil;
-    }));
-
-    final flat = nested.expand((x) => x).toList();
-
-    flat.sort((a, b) {
-      final namaComp = a.rapor.namaSantri.compareTo(b.rapor.namaSantri);
-      if (namaComp != 0) return namaComp;
-      final ia = _urutanKelas.indexOf(a.rapor.kelas.toLowerCase().trim());
-      final ib = _urutanKelas.indexOf(b.rapor.kelas.toLowerCase().trim());
-      return ia.compareTo(ib);
-    });
-
-    return flat;
-  }
-
-  Future<RaporModel?> _bacaRaporBaru(String santriId, String kelas, String tahun) async {
-    final kelasId = kelas.replaceAll(' ', '');
-    final tahunId = tahun.replaceAll('/', '');
-    final docId   = '${santriId}_${kelasId}_$tahunId';
-
-    final snap = await FirebaseFirestore.instance.collection('rapor').doc(docId).get();
-    if (!snap.exists || snap.data() == null) return null;
-    return _parseDoc(snap.data()!, snap.id);
-  }
-
-  Future<RaporModel?> _bacaRaporLama(String santriId, String kelas, String tahun) async {
-    final List<String> kandidatId = [
-      '${santriId}_${tahun.replaceAll("/", "-")}_${kelas.replaceAll(" ", "")}',
-      'TEMP_${santriId}_${tahun.replaceAll("/", "-")}_${kelas.replaceAll(" ", "")}',
-      '${santriId}_${kelas.replaceAll(" ", "")}_${tahun.replaceAll("/", "")}',
-    ];
-
-    for (final docId in kandidatId) {
-      final snap = await FirebaseFirestore.instance.collection('rapor').doc(docId).get();
-      if (snap.exists && snap.data() != null) return _parseDoc(snap.data()!, snap.id);
+    } catch (e) {
+      debugPrint('_fetchSemuaRaporOptimized error: $e');
+      return [];
     }
-    return null;
   }
 
-  Future<RaporModel?> _generateDariNilai(SantriModel santri, String kelas, String tahun) async {
-    final tahunDash  = tahun.replaceAll('/', '-');
-    final kelasNorm  = kelas.replaceAll(' ', '');
-    final kelasLower = kelas.toLowerCase().replaceAll(' ', '');
+  RaporModel? _generateRaporDariDataNilai(SantriModel santri, String kelas, String tahun, Map<String, dynamic> d) {
+    final kelasNorm = kelas.replaceAll(' ', '');
+    final List<NilaiModel> daftarNilai = [];
 
-    final List<String> kandidatDocId = [
-      '${santri.id}_${tahunDash}_$kelasNorm',
-      '${santri.id}_${tahunDash}_$kelasLower',
-      '${santri.id}_${tahunDash}_${kelas.toLowerCase()}',
-    ];
+    void tambah(String prefix, dynamic m) {
+      if (m is! Map) return;
+      m.forEach((k, v) {
+        final n = (v is num) ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0;
+        if (n > 0) {
+          daftarNilai.add(NilaiModel(
+            mataPelajaran: prefix.isEmpty ? k.toString() : '$prefix: $k',
+            nilaiHarian: n,
+            grade: _gradeFromNilai(n),
+          ));
+        }
+      });
+    }
 
-    for (final docId in kandidatDocId) {
-      final snap = await FirebaseFirestore.instance.collection('nilai').doc(docId).get();
-      if (!snap.exists || snap.data() == null) continue;
-      
-      final d = snap.data()!;
-      final List<NilaiModel> daftarNilai = [];
+    tambah('', d['uas']);
 
-      void tambah(String prefix, dynamic m) {
-        if (m is! Map) return;
-        m.forEach((k, v) {
+    if (d['hafalan_kitab'] is Map) {
+      (d['hafalan_kitab'] as Map).forEach((k, v) {
+        if (k.toString().toLowerCase().contains('lisan')) {
           final n = (v is num) ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0;
           if (n > 0) {
             daftarNilai.add(NilaiModel(
-              mataPelajaran: prefix.isEmpty ? k.toString() : '$prefix: $k',
-              nilaiHarian:   n,
-              grade:         _gradeFromNilai(n),
+              mataPelajaran: k.toString(),
+              nilaiHarian: n,
+              grade: _gradeFromNilai(n),
             ));
           }
-        });
-      }
-
-      // HANYA AMBIL UAS UNTUK AKADEMIK
-      tambah('', d['uas']);
-
-      // HANYA AMBIL LISAN UNTUK HAFALAN
-      if (d['hafalan_kitab'] is Map) {
-        (d['hafalan_kitab'] as Map).forEach((k, v) {
-          if (k.toString().toLowerCase().contains('lisan')) {
-            final n = (v is num) ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0;
-            if (n > 0) {
-              daftarNilai.add(NilaiModel(
-                mataPelajaran: k.toString(),
-                nilaiHarian: n,
-                grade: _gradeFromNilai(n),
-              ));
-            }
-          }
-        });
-      }
-
-      if (daftarNilai.isEmpty) continue;
-
-      final nilaiAkhir = (d['nilai_akhir'] as num?)?.toDouble() ?? _hitungRataBerbobot(d);
-      
-      final absen = d['ketidakhadiran'] is Map ? d['ketidakhadiran'] as Map : {};
-      final perilaku = (d['nilai_perilaku'] as num?)?.toDouble() ?? 0;
-      final kehadiran = (d['nilai_kehadiran'] as num?)?.toDouble() ?? 0;
-
-      return RaporModel(
-        id:               'GEN_${santri.id}_$kelasNorm',
-        santriId:         santri.id,
-        namaSantri:       santri.nama,
-        nis:              santri.nis ?? '-',
-        kelas:            kelas,
-        tahunAjaran:      tahun,
-        nilaiRataRata:    nilaiAkhir,
-        predikat:         _getPredikat(nilaiAkhir),
-        catatanWaliKelas: '',
-        tanggalCetak:     DateTime.now(),
-        daftarNilai:      daftarNilai,
-        absenSakit:       int.tryParse(absen['Sakit']?.toString() ?? '0') ?? 0,
-        absenIzin:        int.tryParse(absen['Izin']?.toString() ?? '0') ?? 0,
-        absenAlpha:       int.tryParse(absen['Tanpa Keterangan']?.toString() ?? '0') ?? 0,
-        catatanAdab:      perilaku > 0 ? 'Tercatat' : 'Baik',
-        nilaiSikap:       perilaku,
-        predikatSikap:    _gradeFromNilai(perilaku),
-        nilaiKehadiran:   kehadiran,
-        predikatKehadiran:_gradeFromNilai(kehadiran),
-      );
+        }
+      });
     }
 
-    try {
-      RaporModel? r = await RaporService.generateRapor(santri, kelas, tahun);
-      if (r != null && r.daftarNilai.isNotEmpty) return r;
-      r = await RaporService.generateRapor(santri, kelas.toLowerCase().replaceAll(' ', ''), tahun);
-      if (r != null && r.daftarNilai.isNotEmpty) return r;
-    } catch (_) {}
+    if (daftarNilai.isEmpty) return null;
 
-    return null;
+    final nilaiAkhir = (d['nilai_akhir'] as num?)?.toDouble() ?? _hitungRataBerbobot(d);
+    final absen = d['ketidakhadiran'] is Map ? d['ketidakhadiran'] as Map : {};
+    final perilaku = (d['nilai_perilaku'] as num?)?.toDouble() ?? 0;
+    final kehadiran = (d['nilai_kehadiran'] as num?)?.toDouble() ?? 0;
+
+    return RaporModel(
+      id: 'GEN_${santri.id}_$kelasNorm',
+      santriId: santri.id,
+      namaSantri: santri.nama,
+      nis: santri.nis ?? '-',
+      kelas: kelas,
+      tahunAjaran: tahun,
+      nilaiRataRata: nilaiAkhir,
+      predikat: _getPredikat(nilaiAkhir),
+      catatanWaliKelas: '',
+      tanggalCetak: DateTime.now(),
+      daftarNilai: daftarNilai,
+      absenSakit: int.tryParse(absen['Sakit']?.toString() ?? '0') ?? 0,
+      absenIzin: int.tryParse(absen['Izin']?.toString() ?? '0') ?? 0,
+      absenAlpha: int.tryParse(absen['Tanpa Keterangan']?.toString() ?? '0') ?? 0,
+      catatanAdab: perilaku > 0 ? 'Tercatat' : 'Baik',
+      nilaiSikap: perilaku,
+      predikatSikap: _gradeFromNilai(perilaku),
+      nilaiKehadiran: kehadiran,
+      predikatKehadiran: _gradeFromNilai(kehadiran),
+    );
   }
 
   RaporModel _parseDoc(Map<String, dynamic> d, String docId) {
@@ -288,37 +265,10 @@ class _RaporScreenState extends State<RaporScreen> {
           final n = (item['nilaiHarian'] as num?)?.toDouble() ?? 0.0;
           daftarNilai.add(NilaiModel(
             mataPelajaran: item['mataPelajaran']?.toString() ?? '',
-            nilaiHarian:   n,
-            grade:         item['grade']?.toString() ?? _gradeFromNilai(n),
+            nilaiHarian: n,
+            grade: item['grade']?.toString() ?? _gradeFromNilai(n),
           ));
         }
-      }
-    }
-
-    if (daftarNilai.isEmpty) {
-      void tambah(String prefix, dynamic m) {
-        if (m is! Map) return;
-        m.forEach((k, v) {
-          final n = (v is num) ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0;
-          if (n > 0) {
-            daftarNilai.add(NilaiModel(
-              mataPelajaran: prefix.isEmpty ? k.toString() : '$prefix: $k',
-              nilaiHarian:   n,
-              grade:         _gradeFromNilai(n),
-            ));
-          }
-        });
-      }
-      tambah('', d['uas']);
-      if (d['hafalan_kitab'] is Map) {
-        (d['hafalan_kitab'] as Map).forEach((k, v) {
-          if (k.toString().toLowerCase().contains('lisan')) {
-            final n = (v is num) ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0;
-            if (n > 0) {
-              daftarNilai.add(NilaiModel(mataPelajaran: k.toString(), nilaiHarian: n, grade: _gradeFromNilai(n)));
-            }
-          }
-        });
       }
     }
 
@@ -327,32 +277,31 @@ class _RaporScreenState extends State<RaporScreen> {
     final kehadiran = (d['nilaiKehadiran'] as num?)?.toDouble() ?? (d['nilai_kehadiran'] as num?)?.toDouble() ?? 0.0;
 
     return RaporModel(
-      id:               docId,
-      santriId:         d['santriId']?.toString()        ?? '',
-      namaSantri:       d['namaSantri']?.toString()       ?? '',
-      nis:              d['nis']?.toString()              ?? '-',
-      kelas:            d['kelas']?.toString()            ?? '',
-      tahunAjaran:      d['tahunAjaran']?.toString()      ?? '',
-      nilaiRataRata:    nilaiAkhir,
-      predikat:         d['predikat']?.toString()         ?? _getPredikat(nilaiAkhir),
+      id: docId,
+      santriId: d['santriId']?.toString() ?? '',
+      namaSantri: d['namaSantri']?.toString() ?? '',
+      nis: d['nis']?.toString() ?? '-',
+      kelas: d['kelas']?.toString() ?? '',
+      tahunAjaran: d['tahunAjaran']?.toString() ?? '',
+      nilaiRataRata: nilaiAkhir,
+      predikat: d['predikat']?.toString() ?? _getPredikat(nilaiAkhir),
       catatanWaliKelas: d['catatanWaliKelas']?.toString() ?? '',
-      tanggalCetak:     d['tanggalCetak'] != null ? (d['tanggalCetak'] as Timestamp).toDate() : DateTime.now(),
-      daftarNilai:      daftarNilai,
-      absenSakit:       int.tryParse(d['absenSakit']?.toString() ?? '0') ?? 0,
-      absenIzin:        int.tryParse(d['absenIzin']?.toString() ?? '0') ?? 0,
-      absenAlpha:       int.tryParse(d['absenAlpha']?.toString() ?? '0') ?? 0,
-      catatanAdab:      d['catatanAdab']?.toString() ?? '',
-      nilaiSikap:       perilaku,
-      predikatSikap:    d['predikatSikap']?.toString() ?? _gradeFromNilai(perilaku),
-      nilaiKehadiran:   kehadiran,
-      predikatKehadiran:d['predikatKehadiran']?.toString() ?? _gradeFromNilai(kehadiran),
+      tanggalCetak: d['tanggalCetak'] != null ? (d['tanggalCetak'] as Timestamp).toDate() : DateTime.now(),
+      daftarNilai: daftarNilai,
+      absenSakit: int.tryParse(d['absenSakit']?.toString() ?? '0') ?? 0,
+      absenIzin: int.tryParse(d['absenIzin']?.toString() ?? '0') ?? 0,
+      absenAlpha: int.tryParse(d['absenAlpha']?.toString() ?? '0') ?? 0,
+      catatanAdab: d['catatanAdab']?.toString() ?? '',
+      nilaiSikap: perilaku,
+      predikatSikap: d['predikatSikap']?.toString() ?? _gradeFromNilai(perilaku),
+      nilaiKehadiran: kehadiran,
+      predikatKehadiran: d['predikatKehadiran']?.toString() ?? _gradeFromNilai(kehadiran),
     );
   }
 
-  // ─── Kalkulasi helper ─────────────────────────────────────────────────────────
   double _hitungRataBerbobot(Map<String, dynamic> d) {
-    double kh  = (d['nilai_kehadiran'] as num?)?.toDouble() ?? 0;
-    double pr  = (d['nilai_perilaku']  as num?)?.toDouble() ?? 0;
+    double kh = (d['nilai_kehadiran'] as num?)?.toDouble() ?? 0;
+    double pr = (d['nilai_perilaku'] as num?)?.toDouble() ?? 0;
     double uts = _avgMap(d['uts']);
     double uas = _avgMap(d['uas']);
     double haf = _avgMap(d['hafalan_kitab']);
@@ -382,33 +331,32 @@ class _RaporScreenState extends State<RaporScreen> {
     return 'E (Rasib)';
   }
 
-  // ─── Simpan rapor permanen ───────────────────────────────────────────────
   Future<void> _simpanPermanen(RaporModel rapor) async {
     try {
       final safeId = rapor.id.replaceAll('TEMP_', '').replaceAll('GEN_', '').replaceAll('/', '-');
       await FirebaseFirestore.instance.collection('rapor').doc(safeId).set({
-        'id':               safeId,
-        'santriId':         rapor.santriId,
-        'namaSantri':       rapor.namaSantri,
-        'nis':              rapor.nis,
-        'kelas':            rapor.kelas,
-        'tahunAjaran':      rapor.tahunAjaran,
-        'nilaiRataRata':    rapor.nilaiRataRata,
-        'predikat':         rapor.predikat,
+        'id': safeId,
+        'santriId': rapor.santriId,
+        'namaSantri': rapor.namaSantri,
+        'nis': rapor.nis,
+        'kelas': rapor.kelas,
+        'tahunAjaran': rapor.tahunAjaran,
+        'nilaiRataRata': rapor.nilaiRataRata,
+        'predikat': rapor.predikat,
         'catatanWaliKelas': rapor.catatanWaliKelas,
-        'tanggalCetak':     FieldValue.serverTimestamp(),
-        'absenSakit':       rapor.absenSakit,
-        'absenIzin':        rapor.absenIzin,
-        'absenAlpha':       rapor.absenAlpha,
-        'catatanAdab':      rapor.catatanAdab,
-        'nilaiSikap':       rapor.nilaiSikap,
-        'predikatSikap':    rapor.predikatSikap,
-        'nilaiKehadiran':   rapor.nilaiKehadiran,
-        'predikatKehadiran':rapor.predikatKehadiran,
+        'tanggalCetak': FieldValue.serverTimestamp(),
+        'absenSakit': rapor.absenSakit,
+        'absenIzin': rapor.absenIzin,
+        'absenAlpha': rapor.absenAlpha,
+        'catatanAdab': rapor.catatanAdab,
+        'nilaiSikap': rapor.nilaiSikap,
+        'predikatSikap': rapor.predikatSikap,
+        'nilaiKehadiran': rapor.nilaiKehadiran,
+        'predikatKehadiran': rapor.predikatKehadiran,
         'daftarNilai': rapor.daftarNilai.map((n) => {
           'mataPelajaran': n.mataPelajaran,
-          'nilaiHarian':   n.nilaiHarian,
-          'grade':         n.grade,
+          'nilaiHarian': n.nilaiHarian,
+          'grade': n.grade,
         }).toList(),
       }, SetOptions(merge: true));
     } catch (e) {
@@ -465,9 +413,6 @@ class _RaporScreenState extends State<RaporScreen> {
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // BUILD
-  // ══════════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -519,7 +464,7 @@ class _RaporScreenState extends State<RaporScreen> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           InkWell(onTap: () => Navigator.pop(context),
-            child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20)),
+              child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20)),
           const SizedBox(width: 14),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
@@ -553,7 +498,6 @@ class _RaporScreenState extends State<RaporScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Row(children: [
-        // 1. FILTER KELAS (Dikunci jika Guru)
         if (_isGuruMode)
           Expanded(
             child: Container(
@@ -574,7 +518,6 @@ class _RaporScreenState extends State<RaporScreen> {
 
         const SizedBox(width: 10),
         
-        // 2. FILTER TAHUN AJARAN (Semua bebas ganti tahun)
         _filterTile(Icons.calendar_month_outlined, _selectedTahun,
             () => _showPicker('Tahun Ajaran', _tahunList, (v) {
               setState(() => _selectedTahun = v);
@@ -609,7 +552,7 @@ class _RaporScreenState extends State<RaporScreen> {
           return const SizedBox.shrink();
         }
         final total = snap.data!.length;
-        final gen   = snap.data!.where((r) => r.sumber == _Sumber.generated).length;
+        final gen = snap.data!.where((r) => r.sumber == _Sumber.generated).length;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(children: [
@@ -647,10 +590,10 @@ class _RaporScreenState extends State<RaporScreen> {
   }
 
   Widget _buildKartuRapor(_RaporItem item) {
-    final rapor    = item.rapor;
-    final isLulus  = rapor.kelas.toLowerCase().contains('lulus') || rapor.kelas.toLowerCase().contains('alumni');
+    final rapor = item.rapor;
+    final isLulus = rapor.kelas.toLowerCase().contains('lulus') || rapor.kelas.toLowerCase().contains('alumni');
     final cardColor = isLulus ? Colors.green.shade600 : _warnaPredikat(rapor.predikat);
-    final bgColor   = isLulus ? Colors.green.shade50  : _bgPredikat(rapor.predikat);
+    final bgColor = isLulus ? Colors.green.shade50 : _bgPredikat(rapor.predikat);
     final sudahSimpan = item.sumber != _Sumber.generated;
 
     return Container(
@@ -667,7 +610,7 @@ class _RaporScreenState extends State<RaporScreen> {
         Padding(padding: const EdgeInsets.fromLTRB(14, 14, 14, 10), child: Column(children: [
           Row(children: [
             CircleAvatar(radius: 22, backgroundColor: bgColor,
-              child: Icon(isLulus ? Icons.school_rounded : Icons.person_rounded, color: cardColor, size: 22)),
+                child: Icon(isLulus ? Icons.school_rounded : Icons.person_rounded, color: cardColor, size: 22)),
             const SizedBox(width: 12),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
@@ -675,31 +618,31 @@ class _RaporScreenState extends State<RaporScreen> {
                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14), overflow: TextOverflow.ellipsis)),
                 if (isLulus)
                   Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(color: Colors.green.shade600, borderRadius: BorderRadius.circular(4)),
-                    child: const Text('LULUS', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold))),
+                      decoration: BoxDecoration(color: Colors.green.shade600, borderRadius: BorderRadius.circular(4)),
+                      child: const Text('LULUS', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold))),
               ]),
               const SizedBox(height: 4),
               Row(children: [
                 Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: const Color(0xFFEEECFC), borderRadius: BorderRadius.circular(4)),
-                  child: Text(rapor.kelas, style: const TextStyle(fontSize: 9, color: _kPrimary, fontWeight: FontWeight.bold))),
+                    decoration: BoxDecoration(color: const Color(0xFFEEECFC), borderRadius: BorderRadius.circular(4)),
+                    child: Text(rapor.kelas, style: const TextStyle(fontSize: 9, color: _kPrimary, fontWeight: FontWeight.bold))),
                 const SizedBox(width: 6),
                 Text(rapor.tahunAjaran, style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
                 const SizedBox(width: 6),
                 if (!sudahSimpan)
                   Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                    decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.orange.shade200)),
-                    child: Text('⟳ Belum disimpan', style: TextStyle(fontSize: 8, color: Colors.orange.shade700, fontWeight: FontWeight.bold)))
+                      decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.orange.shade200)),
+                      child: Text('⟳ Belum disimpan', style: TextStyle(fontSize: 8, color: Colors.orange.shade700, fontWeight: FontWeight.bold)))
                 else
                   Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                    decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.green.shade200)),
-                    child: Text('✓ Tersimpan', style: TextStyle(fontSize: 8, color: Colors.green.shade700, fontWeight: FontWeight.bold))),
+                      decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.green.shade200)),
+                      child: Text('✓ Tersimpan', style: TextStyle(fontSize: 8, color: Colors.green.shade700, fontWeight: FontWeight.bold))),
               ]),
             ])),
             Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(8)),
-              child: Text(isLulus ? 'خريج' : _arabicPredikat(rapor.predikat),
-                  style: TextStyle(color: cardColor, fontWeight: FontWeight.bold, fontSize: 13))),
+                decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(8)),
+                child: Text(isLulus ? 'خريج' : _arabicPredikat(rapor.predikat),
+                    style: TextStyle(color: cardColor, fontWeight: FontWeight.bold, fontSize: 13))),
           ]),
 
           const SizedBox(height: 12),
@@ -725,9 +668,8 @@ class _RaporScreenState extends State<RaporScreen> {
     );
   }
 
-  // ─── Modal detail & cetak (Tombol Sticky di Bawah) ──────────────────────────
   void _showDetail(_RaporItem item) {
-    final rapor   = item.rapor;
+    final rapor = item.rapor;
 
     showModalBottomSheet(
       context: context, isScrollControlled: true, backgroundColor: Colors.white,
@@ -738,12 +680,10 @@ class _RaporScreenState extends State<RaporScreen> {
           initialChildSize: 0.85, maxChildSize: 0.95, minChildSize: 0.5,
           expand: false,
           builder: (_, scrollCtrl) => Column(children: [
-            // Handle Bar Atas
             Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Container(
               width: 40, height: 4,
               decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
 
-            // Header Identitas
             Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Row(children: [
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text(rapor.namaSantri, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -753,12 +693,10 @@ class _RaporScreenState extends State<RaporScreen> {
             ])),
             const Divider(height: 1),
 
-            // AREA SCROLL: Isi Nilai
             Expanded(child: ListView(
               controller: scrollCtrl,
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
               children: [
-                // Ringkasan
                 _sectionLabel('Ringkasan Nilai'),
                 const SizedBox(height: 8),
                 Row(children: [
@@ -768,7 +706,6 @@ class _RaporScreenState extends State<RaporScreen> {
                 ]),
                 const SizedBox(height: 24),
 
-                // 1. BAGIAN NILAI AKADEMIK (HANYA UAS)
                 _sectionLabel('1. Nilai Akademik (UAS)'),
                 Container(
                   margin: const EdgeInsets.only(top: 8, bottom: 16),
@@ -784,12 +721,11 @@ class _RaporScreenState extends State<RaporScreen> {
                               dense: true,
                               title: Text(n.mataPelajaran, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                               trailing: Text('${n.nilaiHarian.toStringAsFixed(0)} (${n.grade})', 
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _kPrimary)),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _kPrimary)),
                             )).toList(),
                   ),
                 ),
 
-                // 2. BAGIAN PERILAKU & KEHADIRAN
                 _sectionLabel('2. Penilaian Sikap & Kehadiran'),
                 Container(
                   margin: const EdgeInsets.only(top: 8, bottom: 16),
@@ -810,7 +746,6 @@ class _RaporScreenState extends State<RaporScreen> {
                   ]),
                 ),
 
-                // 3. BAGIAN NILAI HAFALAN (HANYA LISAN)
                 _sectionLabel('3. Nilai Hafalan Lisan'),
                 Container(
                   margin: const EdgeInsets.only(top: 8, bottom: 24),
@@ -826,14 +761,13 @@ class _RaporScreenState extends State<RaporScreen> {
                               dense: true,
                               title: Text(n.mataPelajaran, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                               trailing: Text('${n.nilaiHarian.toStringAsFixed(0)} (${n.grade})', 
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green)),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green)),
                             )).toList(),
                   ),
                 ),
               ],
             )),
 
-            // AREA STICKY: Tombol Cetak PDF Selalu di Bawah
             Container(
               padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).padding.bottom + 16),
               decoration: BoxDecoration(
@@ -863,14 +797,12 @@ class _RaporScreenState extends State<RaporScreen> {
                 ),
               ),
             ),
-            
           ]),
         ),
       ),
     );
   }
 
-  // WIDGET HELPER DALAM UI
   Widget _sectionLabel(String title) {
     return Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87));
   }

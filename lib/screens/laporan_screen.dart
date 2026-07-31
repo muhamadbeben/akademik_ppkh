@@ -3,11 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:intl/date_symbol_data_local.dart'; // [TAMBAHAN]: Import untuk inisialisasi tanggal lokal
+import 'package:intl/date_symbol_data_local.dart';
 
 import '../models/santri_model.dart';
 import '../services/firestore_service.dart';
-import '../services/laporan_pdf_service.dart'; 
+import '../services/laporan_pdf_service.dart';
 
 class LaporanScreen extends StatefulWidget {
   const LaporanScreen({super.key});
@@ -17,14 +17,16 @@ class LaporanScreen extends StatefulWidget {
 }
 
 class _LaporanScreenState extends State<LaporanScreen> {
+  // ─── State & Data ─────────────────────────────────────────────────────────────
   List<SantriModel> _allSantriList = [];
   List<SantriModel> _filteredSantriList = [];
   bool _isLoading = true;
 
-  // ROLE BASED ACCESS
+  // ─── Role Based Access ────────────────────────────────────────────────────────
   bool _isGuruMode = false;
   String _kelasGuru = '';
 
+  // ─── Dropdown Pilihan ─────────────────────────────────────────────────────────
   String _selectedTahunAjaran = '2025/2026';
   String _selectedKelas = 'Semua Kelas';
   String _selectedSantriId = 'Semua Santri';
@@ -35,7 +37,6 @@ class _LaporanScreenState extends State<LaporanScreen> {
     '2023/2024'
   ];
 
-  // Daftar kelas diatur statis agar tidak hilang
   final List<String> _listKelas = const [
     'Semua Kelas',
     'Kelas sp',
@@ -44,41 +45,45 @@ class _LaporanScreenState extends State<LaporanScreen> {
     'Kelas 3',
     'Kelas 4'
   ];
-  
+
   List<String> _listSantri = const ['Semua Santri'];
 
+  // ─── Lifecycle ────────────────────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
     _checkRoleAndFetchData();
   }
 
+  // ══════════════════════════════════════════════════════════════════════════════
+  // FUNGSI PENGAMBILAN DATA
+  // ══════════════════════════════════════════════════════════════════════════════
   Future<void> _checkRoleAndFetchData() async {
     setState(() => _isLoading = true);
     try {
-      // 1. Cek User yang sedang login
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
-        final doc = await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
+        final doc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .get();
+            
         if (doc.exists) {
           final data = doc.data()!;
           final role = data['role']?.toString().toLowerCase() ?? 'admin';
-          
+
           if (role == 'guru') {
             _isGuruMode = true;
             _kelasGuru = data['kelas']?.toString() ?? 'Kelas 1';
-            _selectedKelas = _kelasGuru; // Paksa & kunci kelasnya
+            _selectedKelas = _kelasGuru;
           }
         }
       }
 
-      // 2. Ambil SEMUA data santri (termasuk yang tidak aktif / lulus / pindah)
       _allSantriList = await FirestoreService.getSantriList(
-        kelas: _isGuruMode ? _kelasGuru : null
-      );
-      
+          kelas: _isGuruMode ? _kelasGuru : null);
+
       if (mounted) {
-        // 3. Terapkan filter berdasarkan histori nilai yang ada di database
         await _applyFilters();
       }
     } catch (e) {
@@ -87,42 +92,42 @@ class _LaporanScreenState extends State<LaporanScreen> {
     }
   }
 
-  // Fungsi pintar: Mencari nama berdasarkan jejak rekam nilai yang diinput guru
   Future<void> _applyFilters() async {
     setState(() => _isLoading = true);
     try {
-      // Mulai kueri ke koleksi 'nilai' (bukan 'santri')
-      Query query = FirebaseFirestore.instance.collection('nilai')
+      Query query = FirebaseFirestore.instance
+          .collection('nilai')
           .where('tahunAjaran', isEqualTo: _selectedTahunAjaran);
-          
+
       if (_selectedKelas != 'Semua Kelas') {
         query = query.where('kelas', isEqualTo: _selectedKelas);
       }
-      
+
       final snapshot = await query.get();
-      
-      // Ambil kumpulan ID Santri yang memiliki nilai di kelas & tahun tersebut
+
       final Set<String> santriIdsWithGrades = snapshot.docs
-          .map((doc) => (doc.data() as Map<String, dynamic>)['santriId'].toString())
+          .map((doc) =>
+              (doc.data() as Map<String, dynamic>)['santriId'].toString())
           .toSet();
 
-      // Ekstrak model santri lengkap (Nama & NIS) berdasarkan ID yang ditemukan
-      List<SantriModel> temp = _allSantriList.where((s) => santriIdsWithGrades.contains(s.id)).toList();
+      List<SantriModel> temp = _allSantriList
+          .where((s) => santriIdsWithGrades.contains(s.id))
+          .toList();
       temp.sort((a, b) => a.nama.compareTo(b.nama));
-      
-      // Perbarui dropdown pilihan Nama Santri
-      List<String> updatedSantriList = ['Semua Santri', ...temp.map((s) => s.nama)];
-      
-      // Jika nama yang dipilih sebelumnya tidak ada di daftar kelas ini, kembalikan ke Semua Santri
+
+      List<String> updatedSantriList = [
+        'Semua Santri',
+        ...temp.map((s) => s.nama)
+      ];
+
       if (!updatedSantriList.contains(_selectedSantriId)) {
         _selectedSantriId = 'Semua Santri';
       }
 
-      // Filter spesifik ke satu santri jika dipilih
       if (_selectedSantriId != 'Semua Santri') {
         temp = temp.where((s) => s.nama == _selectedSantriId).toList();
       }
-      
+
       if (mounted) {
         setState(() {
           _listSantri = updatedSantriList;
@@ -136,43 +141,26 @@ class _LaporanScreenState extends State<LaporanScreen> {
     }
   }
 
-  Future<void> _simpanLogLaporanKeFirebase(String jenisLaporan, String formatFile) async {
-    try {
-      final logId = 'REP_${DateTime.now().millisecondsSinceEpoch}';
-      await FirebaseFirestore.instance.collection('rekap_laporan').doc(logId).set({
-        'id': logId,
-        'jenisLaporan': jenisLaporan,
-        'formatFile': formatFile,
-        'tahunAjaran': _selectedTahunAjaran,
-        'kelas': _selectedKelas,
-        'filterSantri': _selectedSantriId,
-        'jumlahSantriTercakup': _filteredSantriList.length,
-        'tanggalDibuat': FieldValue.serverTimestamp(),
-        'daftarSantriMencakup': _filteredSantriList.map((s) => {
-          'id': s.id,
-          'nama': s.nama,
-          'nis': s.nis,
-          'kelas': s.kelas
-        }).toList(),
-      });
-    } catch (e) {
-      debugPrint("Gagal menyimpan log laporan ke Firebase: $e");
-    }
-  }
-
-  // ==================== FUNGSI UTAMA EKSPOR MENGGUNAKAN SERVICE PDF ====================
-  Future<void> _prosesEksporLaporan(String tipeAksi, String jenisLaporan, Color temaWarna) async {
+  // ══════════════════════════════════════════════════════════════════════════════
+  // FUNGSI EKSPOR PDF
+  // ══════════════════════════════════════════════════════════════════════════════
+  Future<void> _prosesEksporLaporan(
+      String tipeAksi, String jenisLaporan, Color temaWarna) async {
     if (_filteredSantriList.isEmpty) {
-      _showSnackBar('Tidak ada jejak nilai santri di Kelas dan Tahun Ajaran ini.', Colors.orange);
+      _showSnackBar(
+          'Tidak ada jejak nilai santri di Kelas dan Tahun Ajaran ini.',
+          Colors.orange);
       return;
     }
 
+    // Tampilkan Loading Dialog
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -180,7 +168,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
               CircularProgressIndicator(color: temaWarna),
               const SizedBox(height: 20),
               const Text(
-                'Memproses dokumen PDF...', 
+                'Memproses dokumen PDF...',
                 style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                 textAlign: TextAlign.center,
               ),
@@ -192,63 +180,101 @@ class _LaporanScreenState extends State<LaporanScreen> {
     );
 
     try {
-      // [PERBAIKAN]: Inisialisasi locale data bahasa Indonesia sebelum melakukan export PDF
       await initializeDateFormatting('id_ID', null);
 
       final pdfService = LaporanPdfService();
-      
-      // Deteksi Eksekusi PDF Sesuai Kategori
+
       if (jenisLaporan.contains('Rekap Nilai')) {
         await pdfService.generateLaporanRekapNilai(
-          santriList: _filteredSantriList,
-          kelas: _selectedKelas,
-          tahunAjaran: _selectedTahunAjaran
-        );
+            santriList: _filteredSantriList,
+            kelas: _selectedKelas,
+            tahunAjaran: _selectedTahunAjaran);
       } else {
         await pdfService.generateLaporanPrediksiAI(
-          santriList: _filteredSantriList, 
-          kelas: _selectedKelas, 
-          tahunAjaran: _selectedTahunAjaran
-        );
+            santriList: _filteredSantriList,
+            kelas: _selectedKelas,
+            tahunAjaran: _selectedTahunAjaran);
       }
 
       await _simpanLogLaporanKeFirebase(jenisLaporan, tipeAksi);
 
       if (mounted) {
-        Navigator.pop(context); // Tutup dialog loading
-        _showSnackBar('Berkas laporan PDF berhasil dibuat & dibuka!', temaWarna);
+        // PERBAIKAN: Gunakan rootNavigator agar tidak menutup paksa preview PDF
+        Navigator.of(context, rootNavigator: true).pop();
+        _showSnackBar(
+            'Berkas laporan PDF berhasil dibuat & dibuka!', temaWarna);
       }
     } catch (e) {
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
       _showSnackBar('Gagal memproses dokumen laporan: $e', Colors.red);
       debugPrint("Error generate PDF: $e");
     }
   }
 
+  Future<void> _simpanLogLaporanKeFirebase(
+      String jenisLaporan, String formatFile) async {
+    try {
+      final logId = 'REP_${DateTime.now().millisecondsSinceEpoch}';
+      await FirebaseFirestore.instance
+          .collection('rekap_laporan')
+          .doc(logId)
+          .set({
+        'id': logId,
+        'jenisLaporan': jenisLaporan,
+        'formatFile': formatFile,
+        'tahunAjaran': _selectedTahunAjaran,
+        'kelas': _selectedKelas,
+        'filterSantri': _selectedSantriId,
+        'jumlahSantriTercakup': _filteredSantriList.length,
+        'tanggalDibuat': FieldValue.serverTimestamp(),
+        'daftarSantriMencakup': _filteredSantriList
+            .map((s) => {
+                  'id': s.id,
+                  'nama': s.nama,
+                  'kelas': s.kelas
+                })
+            .toList(),
+      });
+    } catch (e) {
+      debugPrint("Gagal menyimpan log laporan ke Firebase: $e");
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // UI WIDGETS
+  // ══════════════════════════════════════════════════════════════════════════════
   void _showSnackBar(String message, Color bgColor) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message, style: const TextStyle(fontWeight: FontWeight.w500)),
+        content: Text(message,
+            style: const TextStyle(fontWeight: FontWeight.w500)),
         backgroundColor: bgColor,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 4),
       ),
     );
   }
 
-  void _showPicker(String title, List<String> items, Function(String) onSelect) {
+  void _showPicker(
+      String title, List<String> items, Function(String) onSelect) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) => Container(
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.45),
+        constraints:
+            BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.45),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const SizedBox(height: 16),
-            Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+            Text(title,
+                style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.bold)),
             const SizedBox(height: 10),
             Expanded(
               child: ListView.builder(
@@ -257,7 +283,10 @@ class _LaporanScreenState extends State<LaporanScreen> {
                 itemBuilder: (context, idx) {
                   final item = items[idx];
                   return ListTile(
-                    title: Text(item, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    title: Text(item,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w600, fontSize: 13)),
                     onTap: () {
                       setState(() {
                         onSelect(item);
@@ -279,15 +308,18 @@ class _LaporanScreenState extends State<LaporanScreen> {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) {
         return Container(
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.45),
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.45),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 16),
-              const Text('Pilih Fokus Santri', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+              const Text('Pilih Fokus Santri',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
               const SizedBox(height: 10),
               Expanded(
                 child: ListView.builder(
@@ -296,7 +328,10 @@ class _LaporanScreenState extends State<LaporanScreen> {
                   itemBuilder: (context, idx) {
                     final name = _listSantri[idx];
                     return ListTile(
-                      title: Text(name, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                      title: Text(name,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              fontSize: 13, fontWeight: FontWeight.w600)),
                       onTap: () {
                         setState(() => _selectedSantriId = name);
                         _applyFilters();
@@ -313,7 +348,10 @@ class _LaporanScreenState extends State<LaporanScreen> {
     );
   }
 
-  Widget _buildDropdownItem({required String label, required String value, required VoidCallback onTap}) {
+  Widget _buildDropdownItem(
+      {required String label,
+      required String value,
+      required VoidCallback onTap}) {
     return Expanded(
       child: InkWell(
         onTap: onTap,
@@ -328,23 +366,89 @@ class _LaporanScreenState extends State<LaporanScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey), maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(label,
+                  style: const TextStyle(fontSize: 10, color: Colors.grey),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
               const SizedBox(height: 2),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Expanded(
                     child: Text(
-                      value, 
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold), 
+                      value,
+                      style: const TextStyle(
+                          fontSize: 13, fontWeight: FontWeight.bold),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 1,
                     ),
                   ),
-                  const Icon(Icons.keyboard_arrow_down, size: 16, color: Colors.grey),
+                  const Icon(Icons.keyboard_arrow_down,
+                      size: 16, color: Colors.grey),
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuLaporanRow(IconData icon, Color iconBgColor, String title,
+      String subtitle, VoidCallback onTap) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.grey.shade100),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(14.0),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: iconBgColor.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, color: iconBgColor, size: 22),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: Color(0xFF0F172A)),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 4),
+                      Text(subtitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 11,
+                              height: 1.4,
+                              color: Colors.grey.shade500)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Icon(Icons.arrow_forward_ios,
+                    size: 14, color: Colors.grey.shade400),
+              ],
+            ),
           ),
         ),
       ),
@@ -363,10 +467,15 @@ class _LaporanScreenState extends State<LaporanScreen> {
         elevation: 0,
         centerTitle: true,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded, color: textDarkColor, size: 18),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded,
+              color: textDarkColor, size: 18),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text('Rekap Laporan Hasil', style: TextStyle(color: textDarkColor, fontWeight: FontWeight.bold, fontSize: 16)),
+        title: const Text('Rekap Laporan Hasil',
+            style: TextStyle(
+                color: textDarkColor,
+                fontWeight: FontWeight.bold,
+                fontSize: 16)),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: brandPurple))
@@ -381,7 +490,8 @@ class _LaporanScreenState extends State<LaporanScreen> {
                       if (_isGuruMode)
                         Expanded(
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
                             decoration: BoxDecoration(
                               color: Colors.grey.shade100,
                               borderRadius: BorderRadius.circular(8),
@@ -390,20 +500,27 @@ class _LaporanScreenState extends State<LaporanScreen> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Kelas Anda', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                const Text('Kelas Anda',
+                                    style: TextStyle(
+                                        fontSize: 10, color: Colors.grey)),
                                 const SizedBox(height: 2),
                                 Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
                                     Expanded(
                                       child: Text(
-                                        _kelasGuru, 
-                                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.black54), 
-                                        overflow: TextOverflow.ellipsis, 
+                                        _kelasGuru,
+                                        style: const TextStyle(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.black54),
+                                        overflow: TextOverflow.ellipsis,
                                         maxLines: 1,
                                       ),
                                     ),
-                                    const Icon(Icons.lock, size: 14, color: Colors.grey),
+                                    const Icon(Icons.lock,
+                                        size: 14, color: Colors.grey),
                                   ],
                                 ),
                               ],
@@ -414,14 +531,17 @@ class _LaporanScreenState extends State<LaporanScreen> {
                         _buildDropdownItem(
                           label: 'Kelas Pengajian',
                           value: _selectedKelas,
-                          onTap: () => _showPicker('Pilih Kelas', _listKelas, (val) => _selectedKelas = val),
+                          onTap: () => _showPicker('Pilih Kelas', _listKelas,
+                              (val) => _selectedKelas = val),
                         ),
-                        
                       const SizedBox(width: 8),
                       _buildDropdownItem(
                         label: 'Tahun Ajaran',
                         value: _selectedTahunAjaran,
-                        onTap: () => _showPicker('Tahun Ajaran', _listTahunAjaran, (val) => _selectedTahunAjaran = val),
+                        onTap: () => _showPicker(
+                            'Tahun Ajaran',
+                            _listTahunAjaran,
+                            (val) => _selectedTahunAjaran = val),
                       ),
                     ],
                   ),
@@ -430,96 +550,66 @@ class _LaporanScreenState extends State<LaporanScreen> {
                     onTap: _showSantriPicker,
                     child: Container(
                       padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade200)),
+                      decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade200)),
                       child: Row(
                         children: [
-                          const Icon(Icons.person_outline, size: 20, color: brandPurple),
+                          const Icon(Icons.person_outline,
+                              size: 20, color: brandPurple),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text('Fokus Santri Tercakup', style: TextStyle(fontSize: 10, color: Colors.grey)),
-                                Text(_selectedSantriId, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                const Text('Fokus Santri Tercakup',
+                                    style: TextStyle(
+                                        fontSize: 10, color: Colors.grey)),
+                                Text(_selectedSantriId,
+                                    style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis),
                               ],
                             ),
                           ),
-                          const Icon(Icons.arrow_drop_down, color: Colors.grey),
+                          const Icon(Icons.arrow_drop_down,
+                              color: Colors.grey),
                         ],
                       ),
                     ),
                   ),
                   const SizedBox(height: 24),
-
-                  const Text('Pilih Jenis Dokumen Cetak', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textDarkColor)),
+                  const Text('Pilih Jenis Dokumen Cetak',
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: textDarkColor)),
                   const SizedBox(height: 12),
-
                   _buildMenuLaporanRow(
                     Icons.assignment_turned_in_rounded,
                     const Color(0xFF6366F1),
                     'Laporan Rekap Transkrip Nilai',
                     'Unduh dokumen PDF resmi berisi kompilasi absensi, rata-rata setoran lisan, serta nilai UTS & UAS santri.',
-                    () => _prosesEksporLaporan('Ekspor PDF', 'Laporan Rekap Nilai Santri', const Color(0xFF6366F1)),
+                    () => _prosesEksporLaporan('Ekspor PDF',
+                        'Laporan Rekap Nilai Santri', const Color(0xFF6366F1)),
                   ),
-
                   _buildMenuLaporanRow(
                     Icons.insights_rounded,
                     const Color(0xFF9333EA),
                     'Laporan Analisis Kelulusan AI',
                     'Unduh rekapitulasi performa kelulusan dan kenaikan jenjang kelas santri berdasarkan komparasi algoritma Random Forest.',
-                    () => _prosesEksporLaporan('Ekspor PDF', 'Laporan Prediksi AI (Random Forest)', const Color(0xFF9333EA)),
+                    () => _prosesEksporLaporan(
+                        'Ekspor PDF',
+                        'Laporan Prediksi AI (Random Forest)',
+                        const Color(0xFF9333EA)),
                   ),
-                  
                   const SizedBox(height: 50),
                 ],
               ),
             ),
-    );
-  }
-
-  Widget _buildMenuLaporanRow(IconData icon, Color iconBgColor, String title, String subtitle, VoidCallback onTap) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade100),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(14.0),
-            child: Row(
-              children: [
-                Container(
-                  width: 44, height: 44,
-                  decoration: BoxDecoration(
-                    color: iconBgColor.withAlpha(25),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(icon, color: iconBgColor, size: 22),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF0F172A)), maxLines: 1, overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 4),
-                      Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, height: 1.4, color: Colors.grey.shade500)),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey.shade400),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

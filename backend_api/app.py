@@ -1,8 +1,10 @@
 from flask import Flask, request, jsonify
+from flask_cors import CORS  # <--- TAMBAHAN 1: Import CORS
 import pickle
 import numpy as np
 
 app = Flask(__name__)
+CORS(app)  # <--- TAMBAHAN 2: Aktifkan CORS untuk aplikasi ini
 
 # 1. Muat Model Random Forest DAN Scaler-nya
 with open('final_model_rf .pkl', 'rb') as f_model:

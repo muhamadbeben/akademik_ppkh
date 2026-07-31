@@ -61,7 +61,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       Color(0xFF00B69B),
     ),
     _MenuData(
-      'Prediksi AI',
+      'Prediksi Kelulusan',
       'Prediksi prestasi\nsantri dengan AI',
       Icons.psychology_rounded,
       Color(0xFF7B61FF),
@@ -102,16 +102,16 @@ class _DashboardScreenState extends State<DashboardScreen>
                 menu.title == 'Input Nilai' ||
                 menu.title == 'Jadwal Pelajaran' ||
                 menu.title == 'Cetak Rapot' ||
-                menu.title == 'Prediksi AI' ||
+                menu.title == 'Prediksi Kelulusan' ||
                 menu.title == 'Laporan',
           )
           .toList();
     }
-    // Wali Santri hanya melihat Rapot dan Prediksi AI
+    // Wali Santri hanya melihat Rapot dan Prediksi Kelulusan
     return _allMenus
         .where(
           (menu) =>
-              menu.title == 'Cetak Rapot' || menu.title == 'Prediksi AI',
+              menu.title == 'Cetak Rapot' || menu.title == 'Prediksi Kelulusan',
         )
         .toList();
   }
@@ -197,8 +197,8 @@ class _DashboardScreenState extends State<DashboardScreen>
           santriId: widget.santriId,
         );
         break;
-      case 'Prediksi AI':
-        // [PERBAIKAN]: Lempar parameter agar halaman AI tidak error untuk wali
+      case 'Prediksi Kelulusan':
+        // [PERBAIKAN]: Lempar parameter agar halaman Kelulusan tidak error untuk wali
         targetScreen = PrediksiScreen(
           role: _cleanedRole == 'walisantri' ? 'wali_santri' : 'ustadz',
           santriId: widget.santriId,
@@ -302,9 +302,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                         );
                       },
                     ),
-                    
+
                     const SizedBox(height: 24),
-                    
+
                     // [PERBAIKAN PRIVASI]: Hanya Admin & Guru yang bisa melihat grafik pesantren
                     if (_cleanedRole == 'admin' || _cleanedRole == 'guru') ...[
                       Row(
@@ -453,11 +453,27 @@ class _DashboardScreenState extends State<DashboardScreen>
   Widget _buildFloatingDateCard() {
     final now = DateTime.now();
     final List<String> hari = [
-      'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'
+      'Senin',
+      'Selasa',
+      'Rabu',
+      'Kamis',
+      'Jumat',
+      'Sabtu',
+      'Minggu'
     ];
     final List<String> bulan = [
-      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
-      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+      'Januari',
+      'Februari',
+      'Maret',
+      'April',
+      'Mei',
+      'Juni',
+      'Juli',
+      'Agustus',
+      'September',
+      'Oktober',
+      'November',
+      'Desember'
     ];
     final formatTanggal =
         '${hari[now.weekday - 1]}, ${now.day} ${bulan[now.month - 1]} ${now.year}';
