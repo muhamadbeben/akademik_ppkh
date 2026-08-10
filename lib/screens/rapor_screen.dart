@@ -6,9 +6,18 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../models/santri_model.dart';
 import '../models/rapor_model.dart';
 import '../services/firestore_service.dart';
+import '../services/rapor_parser.dart';
 import '../services/rapor_service.dart';
+import '../utils/rapor_utils.dart';
 
 const Color _kPrimary = Color(0xFF3C21F7);
+
+double _toDouble(dynamic value) {
+  if (value == null) return 0.0;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString()) ?? 0.0;
+}
+
 const Color _kSurface = Color(0xFFFAFAFC);
 
 enum _Sumber { raporBaru, raporLama, generated }
@@ -22,9 +31,9 @@ class _RaporItem {
 class RaporScreen extends StatefulWidget {
   final String? santriId;
   final String? userRole;
-  
+
   const RaporScreen({super.key, this.santriId, this.userRole});
-  
+
   @override
   State<RaporScreen> createState() => _RaporScreenState();
 }
@@ -33,22 +42,41 @@ class _RaporScreenState extends State<RaporScreen> {
   // ─── State ────────────────────────────────────────────────────────────────────
   List<SantriModel> _santriList = [];
   bool _isLoading = true;
-  
+
   // ROLE BASED ACCESS
   bool _isWaliSantriMode = false;
   bool _isGuruMode = false;
   String _kelasGuru = '';
-  
+
   String _selectedKelas = 'Semua Kelas';
   String _selectedTahun = '2025/2026';
 
   Future<List<_RaporItem>>? _raporFuture;
 
-  final List<String> _kelasList = ['Semua Kelas','Kelas sp','Kelas 1','Kelas 2','Kelas 3','Kelas 4'];
-  final List<String> _tahunList = ['2025/2026','2024/2025','2023/2024'];
-  final List<String> _semuaKelas = ['Kelas sp','Kelas 1','Kelas 2','Kelas 3','Kelas 4'];
+  final List<String> _kelasList = [
+    'Semua Kelas',
+    'Kelas sp',
+    'Kelas 1',
+    'Kelas 2',
+    'Kelas 3',
+    'Kelas 4'
+  ];
+  final List<String> _tahunList = ['2025/2026', '2024/2025', '2023/2024'];
+  final List<String> _semuaKelas = [
+    'Kelas sp',
+    'Kelas 1',
+    'Kelas 2',
+    'Kelas 3',
+    'Kelas 4'
+  ];
 
-  final List<String> _urutanKelas = ['kelas sp','kelas 1','kelas 2','kelas 3','kelas 4'];
+  final List<String> _urutanKelas = [
+    'kelas sp',
+    'kelas 1',
+    'kelas 2',
+    'kelas 3',
+    'kelas 4'
+  ];
 
   // ─── Init ─────────────────────────────────────────────────────────────────────
   @override
@@ -66,16 +94,18 @@ class _RaporScreenState extends State<RaporScreen> {
       final user = FirebaseAuth.instance.currentUser;
       if (user != null) {
         final doc = await FirebaseFirestore.instance
-            .collection('users').doc(user.uid).get();
+            .collection('users')
+            .doc(user.uid)
+            .get();
         if (doc.exists) {
           final d = doc.data();
           role ??= d?['role']?.toString().trim().toLowerCase();
           targetId ??= d?['santriId']?.toString().trim();
-          
+
           if (role == 'guru') {
             _isGuruMode = true;
             _kelasGuru = d?['kelas']?.toString() ?? 'Kelas 1';
-            _selectedKelas = _kelasGuru; 
+            _selectedKelas = _kelasGuru;
           }
         }
       }
@@ -102,7 +132,9 @@ class _RaporScreenState extends State<RaporScreen> {
     }
   }
 
-  void _refresh() => setState(() { _raporFuture = _fetchSemuaRaporOptimized(); });
+  void _refresh() => setState(() {
+        _raporFuture = _fetchSemuaRaporOptimized();
+      });
 
   // ══════════════════════════════════════════════════════════════════════════════
   // FETCH RAPOR OPTIMIZED (Menggunakan .where() untuk memangkas waktu loading)
@@ -110,9 +142,10 @@ class _RaporScreenState extends State<RaporScreen> {
   Future<List<_RaporItem>> _fetchSemuaRaporOptimized() async {
     if (_santriList.isEmpty) return [];
 
-    final List<String> targetKelas = (_selectedKelas == 'Semua Kelas' || _isWaliSantriMode)
-        ? _semuaKelas
-        : [_selectedKelas];
+    final List<String> targetKelas =
+        (_selectedKelas == 'Semua Kelas' || _isWaliSantriMode)
+            ? _semuaKelas
+            : [_selectedKelas];
 
     final santriIds = _santriList.map((s) => s.id).toList();
     if (santriIds.isEmpty) return [];
@@ -155,21 +188,30 @@ class _RaporScreenState extends State<RaporScreen> {
           final idTemp = 'TEMP_$idLama';
 
           if (mapRapor.containsKey(idBaru)) {
-            hasil.add(_RaporItem(rapor: _parseDoc(mapRapor[idBaru]!, idBaru), sumber: _Sumber.raporBaru));
+            hasil.add(_RaporItem(
+                rapor: _parseDoc(mapRapor[idBaru]!, idBaru),
+                sumber: _Sumber.raporBaru));
           } else if (mapRapor.containsKey(idLama)) {
-            hasil.add(_RaporItem(rapor: _parseDoc(mapRapor[idLama]!, idLama), sumber: _Sumber.raporBaru));
+            hasil.add(_RaporItem(
+                rapor: _parseDoc(mapRapor[idLama]!, idLama),
+                sumber: _Sumber.raporBaru));
           } else if (mapRapor.containsKey(idTemp)) {
-            hasil.add(_RaporItem(rapor: _parseDoc(mapRapor[idTemp]!, idTemp), sumber: _Sumber.raporBaru));
+            hasil.add(_RaporItem(
+                rapor: _parseDoc(mapRapor[idTemp]!, idTemp),
+                sumber: _Sumber.raporBaru));
           } else {
             // Jika tidak ada di koleksi rapor, cek apakah ada di koleksi nilai untuk di-generate otomatis
             final idNilai1 = '${santri.id}_${tahunDash}_$kelasNorm';
-            final idNilai2 = '${santri.id}_${tahunDash}_${kelas.toLowerCase().replaceAll(' ', '')}';
+            final idNilai2 =
+                '${santri.id}_${tahunDash}_${kelas.toLowerCase().replaceAll(' ', '')}';
 
             final dataNilai = mapNilai[idNilai1] ?? mapNilai[idNilai2];
             if (dataNilai != null) {
-              final generatedRapor = _generateRaporDariDataNilai(santri, kelas, _selectedTahun, dataNilai);
+              final generatedRapor = RaporDataParser.buildRaporFromNilaiData(
+                  santri, kelas, _selectedTahun, dataNilai);
               if (generatedRapor != null) {
-                hasil.add(_RaporItem(rapor: generatedRapor, sumber: _Sumber.generated));
+                hasil.add(_RaporItem(
+                    rapor: generatedRapor, sumber: _Sumber.generated));
               }
             }
           }
@@ -191,149 +233,16 @@ class _RaporScreenState extends State<RaporScreen> {
     }
   }
 
-  RaporModel? _generateRaporDariDataNilai(SantriModel santri, String kelas, String tahun, Map<String, dynamic> d) {
-    final kelasNorm = kelas.replaceAll(' ', '');
-    final List<NilaiModel> daftarNilai = [];
-
-    void tambah(String prefix, dynamic m) {
-      if (m is! Map) return;
-      m.forEach((k, v) {
-        final n = (v is num) ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0;
-        if (n > 0) {
-          daftarNilai.add(NilaiModel(
-            mataPelajaran: prefix.isEmpty ? k.toString() : '$prefix: $k',
-            nilaiHarian: n,
-            grade: _gradeFromNilai(n),
-          ));
-        }
-      });
-    }
-
-    tambah('', d['uas']);
-
-    if (d['hafalan_kitab'] is Map) {
-      (d['hafalan_kitab'] as Map).forEach((k, v) {
-        if (k.toString().toLowerCase().contains('lisan')) {
-          final n = (v is num) ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0;
-          if (n > 0) {
-            daftarNilai.add(NilaiModel(
-              mataPelajaran: k.toString(),
-              nilaiHarian: n,
-              grade: _gradeFromNilai(n),
-            ));
-          }
-        }
-      });
-    }
-
-    if (daftarNilai.isEmpty) return null;
-
-    final nilaiAkhir = (d['nilai_akhir'] as num?)?.toDouble() ?? _hitungRataBerbobot(d);
-    final absen = d['ketidakhadiran'] is Map ? d['ketidakhadiran'] as Map : {};
-    final perilaku = (d['nilai_perilaku'] as num?)?.toDouble() ?? 0;
-    final kehadiran = (d['nilai_kehadiran'] as num?)?.toDouble() ?? 0;
-
-    return RaporModel(
-      id: 'GEN_${santri.id}_$kelasNorm',
-      santriId: santri.id,
-      namaSantri: santri.nama,
-      nis: santri.nis ?? '-',
-      kelas: kelas,
-      tahunAjaran: tahun,
-      nilaiRataRata: nilaiAkhir,
-      predikat: _getPredikat(nilaiAkhir),
-      catatanWaliKelas: '',
-      tanggalCetak: DateTime.now(),
-      daftarNilai: daftarNilai,
-      absenSakit: int.tryParse(absen['Sakit']?.toString() ?? '0') ?? 0,
-      absenIzin: int.tryParse(absen['Izin']?.toString() ?? '0') ?? 0,
-      absenAlpha: int.tryParse(absen['Tanpa Keterangan']?.toString() ?? '0') ?? 0,
-      catatanAdab: perilaku > 0 ? 'Tercatat' : 'Baik',
-      nilaiSikap: perilaku,
-      predikatSikap: _gradeFromNilai(perilaku),
-      nilaiKehadiran: kehadiran,
-      predikatKehadiran: _gradeFromNilai(kehadiran),
-    );
-  }
-
   RaporModel _parseDoc(Map<String, dynamic> d, String docId) {
-    final List<NilaiModel> daftarNilai = [];
-
-    if (d['daftarNilai'] is List) {
-      for (final item in d['daftarNilai'] as List) {
-        if (item is Map) {
-          final n = (item['nilaiHarian'] as num?)?.toDouble() ?? 0.0;
-          daftarNilai.add(NilaiModel(
-            mataPelajaran: item['mataPelajaran']?.toString() ?? '',
-            nilaiHarian: n,
-            grade: item['grade']?.toString() ?? _gradeFromNilai(n),
-          ));
-        }
-      }
-    }
-
-    final nilaiAkhir = (d['nilai_akhir'] as num?)?.toDouble() ?? (d['nilaiRataRata'] as num?)?.toDouble() ?? _hitungRataBerbobot(d);
-    final perilaku = (d['nilaiSikap'] as num?)?.toDouble() ?? (d['nilai_perilaku'] as num?)?.toDouble() ?? 0.0;
-    final kehadiran = (d['nilaiKehadiran'] as num?)?.toDouble() ?? (d['nilai_kehadiran'] as num?)?.toDouble() ?? 0.0;
-
-    return RaporModel(
-      id: docId,
-      santriId: d['santriId']?.toString() ?? '',
-      namaSantri: d['namaSantri']?.toString() ?? '',
-      nis: d['nis']?.toString() ?? '-',
-      kelas: d['kelas']?.toString() ?? '',
-      tahunAjaran: d['tahunAjaran']?.toString() ?? '',
-      nilaiRataRata: nilaiAkhir,
-      predikat: d['predikat']?.toString() ?? _getPredikat(nilaiAkhir),
-      catatanWaliKelas: d['catatanWaliKelas']?.toString() ?? '',
-      tanggalCetak: d['tanggalCetak'] != null ? (d['tanggalCetak'] as Timestamp).toDate() : DateTime.now(),
-      daftarNilai: daftarNilai,
-      absenSakit: int.tryParse(d['absenSakit']?.toString() ?? '0') ?? 0,
-      absenIzin: int.tryParse(d['absenIzin']?.toString() ?? '0') ?? 0,
-      absenAlpha: int.tryParse(d['absenAlpha']?.toString() ?? '0') ?? 0,
-      catatanAdab: d['catatanAdab']?.toString() ?? '',
-      nilaiSikap: perilaku,
-      predikatSikap: d['predikatSikap']?.toString() ?? _gradeFromNilai(perilaku),
-      nilaiKehadiran: kehadiran,
-      predikatKehadiran: d['predikatKehadiran']?.toString() ?? _gradeFromNilai(kehadiran),
-    );
-  }
-
-  double _hitungRataBerbobot(Map<String, dynamic> d) {
-    double kh = (d['nilai_kehadiran'] as num?)?.toDouble() ?? 0;
-    double pr = (d['nilai_perilaku'] as num?)?.toDouble() ?? 0;
-    double uts = _avgMap(d['uts']);
-    double uas = _avgMap(d['uas']);
-    double haf = _avgMap(d['hafalan_kitab']);
-    return (kh * 0.05) + (pr * 0.05) + (uts * 0.20) + (uas * 0.40) + (haf * 0.30);
-  }
-
-  double _avgMap(dynamic m) {
-    if (m is! Map) return 0;
-    double s = 0; int c = 0;
-    m.forEach((_, v) { s += (v as num?)?.toDouble() ?? 0; c++; });
-    return c > 0 ? s / c : 0;
-  }
-
-  String _gradeFromNilai(double n) {
-    if (n >= 90) return 'A';
-    if (n >= 80) return 'B';
-    if (n >= 70) return 'C';
-    if (n >= 60) return 'D';
-    return 'E';
-  }
-
-  String _getPredikat(double n) {
-    if (n >= 90) return 'A (Mumtaz)';
-    if (n >= 80) return 'B (Jayyid Jiddan)';
-    if (n >= 70) return 'C (Jayyid)';
-    if (n >= 60) return 'D (Maqbul)';
-    return 'E (Rasib)';
+    return RaporDataParser.parseRaporDoc(d, docId);
   }
 
   Future<void> _simpanPermanen(RaporModel rapor) async {
     try {
-      final safeId = rapor.id.replaceAll('TEMP_', '').replaceAll('GEN_', '').replaceAll('/', '-');
+      final safeId = rapor.id
+          .replaceAll('TEMP_', '')
+          .replaceAll('GEN_', '')
+          .replaceAll('/', '-');
       await FirebaseFirestore.instance.collection('rapor').doc(safeId).set({
         'id': safeId,
         'santriId': rapor.santriId,
@@ -353,11 +262,13 @@ class _RaporScreenState extends State<RaporScreen> {
         'predikatSikap': rapor.predikatSikap,
         'nilaiKehadiran': rapor.nilaiKehadiran,
         'predikatKehadiran': rapor.predikatKehadiran,
-        'daftarNilai': rapor.daftarNilai.map((n) => {
-          'mataPelajaran': n.mataPelajaran,
-          'nilaiHarian': n.nilaiHarian,
-          'grade': n.grade,
-        }).toList(),
+        'daftarNilai': rapor.daftarNilai
+            .map((n) => {
+                  'mataPelajaran': n.mataPelajaran,
+                  'nilaiHarian': n.nilaiHarian,
+                  'grade': n.grade,
+                })
+            .toList(),
       }, SetOptions(merge: true));
     } catch (e) {
       debugPrint('_simpanPermanen error: $e');
@@ -385,26 +296,38 @@ class _RaporScreenState extends State<RaporScreen> {
     return 'راسب';
   }
 
-  void _showPicker(String title, List<String> items, Function(String) onSelect) {
+  void _showPicker(
+      String title, List<String> items, Function(String) onSelect) {
     showModalBottomSheet(
-      context: context, backgroundColor: Colors.white, isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => Container(
         padding: const EdgeInsets.only(top: 16, bottom: 20),
-        constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
+        constraints:
+            BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.6),
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(title,
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const Divider(height: 24),
-          Expanded(child: ListView.builder(
+          Expanded(
+              child: ListView.builder(
             physics: const BouncingScrollPhysics(),
             itemCount: items.length,
             itemBuilder: (_, i) => ListTile(
-              contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 24),
-              title: Text(items[i], textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+              contentPadding:
+                  const EdgeInsets.symmetric(vertical: 4, horizontal: 24),
+              title: Text(items[i],
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 14)),
               onTap: () {
                 Navigator.pop(context);
-                Future.delayed(const Duration(milliseconds: 150), () => onSelect(items[i]));
+                Future.delayed(const Duration(milliseconds: 150),
+                    () => onSelect(items[i]));
               },
             ),
           )),
@@ -428,11 +351,13 @@ class _RaporScreenState extends State<RaporScreen> {
               const SizedBox(height: 8),
               if (!_isLoading) _buildInfoBar(),
               const SizedBox(height: 4),
-              Expanded(child: FutureBuilder<List<_RaporItem>>(
+              Expanded(
+                  child: FutureBuilder<List<_RaporItem>>(
                 future: _raporFuture,
                 builder: (_, snap) {
                   if (snap.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator(color: _kPrimary));
+                    return const Center(
+                        child: CircularProgressIndicator(color: _kPrimary));
                   }
                   final list = snap.data ?? [];
                   if (list.isEmpty) return _emptyState();
@@ -456,15 +381,19 @@ class _RaporScreenState extends State<RaporScreen> {
       width: double.infinity,
       padding: EdgeInsets.only(
           top: MediaQuery.of(context).padding.top + 14,
-          left: 20, right: 20, bottom: 24),
+          left: 20,
+          right: 20,
+          bottom: 24),
       decoration: const BoxDecoration(
         color: _kPrimary,
         borderRadius: BorderRadius.vertical(bottom: Radius.circular(28)),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          InkWell(onTap: () => Navigator.pop(context),
-              child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 20)),
+          InkWell(
+              onTap: () => Navigator.pop(context),
+              child: const Icon(Icons.arrow_back_ios_new_rounded,
+                  color: Colors.white, size: 20)),
           const SizedBox(width: 14),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
@@ -474,21 +403,24 @@ class _RaporScreenState extends State<RaporScreen> {
             child: const Row(children: [
               Icon(Icons.mosque_rounded, color: Colors.white, size: 13),
               SizedBox(width: 6),
-              Text('Ponpes Khoirul Huda', style: TextStyle(color: Colors.white, fontSize: 11)),
+              Text('Ponpes Khoirul Huda',
+                  style: TextStyle(color: Colors.white, fontSize: 11)),
             ]),
           ),
         ]),
         const SizedBox(height: 18),
         Text(
           _isWaliSantriMode ? 'Rapor Akademik Anak' : 'Rapor Digital Santri',
-          style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+          style: const TextStyle(
+              color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 4),
         Text(
           _isWaliSantriMode
               ? 'Riwayat rapor dari semua kelas'
               : 'Semua santri · $_selectedKelas · $_selectedTahun',
-          style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 12),
+          style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.75), fontSize: 12),
         ),
       ]),
     );
@@ -502,73 +434,108 @@ class _RaporScreenState extends State<RaporScreen> {
           Expanded(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade300)),
+              decoration: BoxDecoration(
+                  color: Colors.grey.shade200,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300)),
               child: Row(children: [
                 const Icon(Icons.lock, size: 16, color: Colors.grey),
                 const SizedBox(width: 8),
-                Expanded(child: Text(_kelasGuru, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54), overflow: TextOverflow.ellipsis)),
+                Expanded(
+                    child: Text(_kelasGuru,
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black54),
+                        overflow: TextOverflow.ellipsis)),
               ]),
             ),
           )
         else
-          _filterTile(Icons.layers_outlined, _selectedKelas, () => _showPicker('Pilih Kelas', _kelasList, (v) {
-            setState(() => _selectedKelas = v);
-            _refresh();
-          })),
-
+          _filterTile(
+              Icons.layers_outlined,
+              _selectedKelas,
+              () => _showPicker('Pilih Kelas', _kelasList, (v) {
+                    setState(() => _selectedKelas = v);
+                    _refresh();
+                  })),
         const SizedBox(width: 10),
-        
-        _filterTile(Icons.calendar_month_outlined, _selectedTahun,
+        _filterTile(
+            Icons.calendar_month_outlined,
+            _selectedTahun,
             () => _showPicker('Tahun Ajaran', _tahunList, (v) {
-              setState(() => _selectedTahun = v);
-              _refresh();
-            })),
+                  setState(() => _selectedTahun = v);
+                  _refresh();
+                })),
       ]),
     );
   }
 
-  Widget _filterTile(IconData icon, String label, VoidCallback onTap) => Expanded(
-    child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade200)),
-        child: Row(children: [
-          Icon(icon, size: 16, color: _kPrimary), const SizedBox(width: 8),
-          Expanded(child: Text(label,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-              overflow: TextOverflow.ellipsis)),
-          const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Colors.grey),
-        ]),
-      ),
-    ),
-  );
+  Widget _filterTile(IconData icon, String label, VoidCallback onTap) =>
+      Expanded(
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200)),
+            child: Row(children: [
+              Icon(icon, size: 16, color: _kPrimary),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(label,
+                      style: const TextStyle(
+                          fontSize: 12, fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis)),
+              const Icon(Icons.keyboard_arrow_down_rounded,
+                  size: 16, color: Colors.grey),
+            ]),
+          ),
+        ),
+      );
 
   Widget _buildInfoBar() {
     return FutureBuilder<List<_RaporItem>>(
       future: _raporFuture,
       builder: (_, snap) {
-        if (snap.connectionState == ConnectionState.waiting || snap.data == null) {
+        if (snap.connectionState == ConnectionState.waiting ||
+            snap.data == null) {
           return const SizedBox.shrink();
         }
         final total = snap.data!.length;
-        final gen = snap.data!.where((r) => r.sumber == _Sumber.generated).length;
+        final gen =
+            snap.data!.where((r) => r.sumber == _Sumber.generated).length;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(children: [
-            Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(color: _kPrimary.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(6)),
-              child: Text('$total rapor ditemukan',
-                  style: const TextStyle(fontSize: 11, color: _kPrimary, fontWeight: FontWeight.w600))),
+            Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                    color: _kPrimary.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(6)),
+                child: Text('$total rapor ditemukan',
+                    style: const TextStyle(
+                        fontSize: 11,
+                        color: _kPrimary,
+                        fontWeight: FontWeight.w600))),
             if (gen > 0) ...[
               const SizedBox(width: 8),
-              Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: Colors.orange.shade200)),
-                child: Text('$gen perlu dicetak untuk disimpan',
-                    style: TextStyle(fontSize: 10, color: Colors.orange.shade700, fontWeight: FontWeight.w600))),
+              Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                      color: Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.orange.shade200)),
+                  child: Text('$gen perlu dicetak untuk disimpan',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.orange.shade700,
+                          fontWeight: FontWeight.w600))),
             ],
           ]),
         );
@@ -581,9 +548,11 @@ class _RaporScreenState extends State<RaporScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.folder_open_rounded, size: 64, color: Colors.grey.shade400),
+          Icon(Icons.folder_open_rounded,
+              size: 64, color: Colors.grey.shade400),
           const SizedBox(height: 12),
-          Text('Belum ada data rapor.', style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
+          Text('Belum ada data rapor.',
+              style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
         ],
       ),
     );
@@ -591,79 +560,163 @@ class _RaporScreenState extends State<RaporScreen> {
 
   Widget _buildKartuRapor(_RaporItem item) {
     final rapor = item.rapor;
-    final isLulus = rapor.kelas.toLowerCase().contains('lulus') || rapor.kelas.toLowerCase().contains('alumni');
-    final cardColor = isLulus ? Colors.green.shade600 : _warnaPredikat(rapor.predikat);
-    final bgColor = isLulus ? Colors.green.shade50 : _bgPredikat(rapor.predikat);
+    final isLulus = rapor.kelas.toLowerCase().contains('lulus') ||
+        rapor.kelas.toLowerCase().contains('alumni');
+    final cardColor =
+        isLulus ? Colors.green.shade600 : _warnaPredikat(rapor.predikat);
+    final bgColor =
+        isLulus ? Colors.green.shade50 : _bgPredikat(rapor.predikat);
     final sudahSimpan = item.sumber != _Sumber.generated;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(16),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 6, offset: const Offset(0, 2))],
+        boxShadow: [
+          BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 6,
+              offset: const Offset(0, 2))
+        ],
       ),
       child: Column(children: [
-        Container(height: 4, decoration: BoxDecoration(color: cardColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)))),
-
-        Padding(padding: const EdgeInsets.fromLTRB(14, 14, 14, 10), child: Column(children: [
-          Row(children: [
-            CircleAvatar(radius: 22, backgroundColor: bgColor,
-                child: Icon(isLulus ? Icons.school_rounded : Icons.person_rounded, color: cardColor, size: 22)),
-            const SizedBox(width: 12),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+            height: 4,
+            decoration: BoxDecoration(
+                color: cardColor,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(16)))),
+        Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+            child: Column(children: [
               Row(children: [
-                Expanded(child: Text(rapor.namaSantri,
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14), overflow: TextOverflow.ellipsis)),
-                if (isLulus)
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(color: Colors.green.shade600, borderRadius: BorderRadius.circular(4)),
-                      child: const Text('LULUS', style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold))),
+                CircleAvatar(
+                    radius: 22,
+                    backgroundColor: bgColor,
+                    child: Icon(
+                        isLulus ? Icons.school_rounded : Icons.person_rounded,
+                        color: cardColor,
+                        size: 22)),
+                const SizedBox(width: 12),
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Row(children: [
+                        Expanded(
+                            child: Text(rapor.namaSantri,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 14),
+                                overflow: TextOverflow.ellipsis)),
+                        if (isLulus)
+                          Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                  color: Colors.green.shade600,
+                                  borderRadius: BorderRadius.circular(4)),
+                              child: const Text('LULUS',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold))),
+                      ]),
+                      const SizedBox(height: 4),
+                      Row(children: [
+                        Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                                color: const Color(0xFFEEECFC),
+                                borderRadius: BorderRadius.circular(4)),
+                            child: Text(rapor.kelas,
+                                style: const TextStyle(
+                                    fontSize: 9,
+                                    color: _kPrimary,
+                                    fontWeight: FontWeight.bold))),
+                        const SizedBox(width: 6),
+                        Text(rapor.tahunAjaran,
+                            style: TextStyle(
+                                fontSize: 10, color: Colors.grey.shade500)),
+                        const SizedBox(width: 6),
+                        if (!sudahSimpan)
+                          Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                  color: Colors.orange.shade50,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                      color: Colors.orange.shade200)),
+                              child: Text('⟳ Belum disimpan',
+                                  style: TextStyle(
+                                      fontSize: 8,
+                                      color: Colors.orange.shade700,
+                                      fontWeight: FontWeight.bold)))
+                        else
+                          Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 2),
+                              decoration: BoxDecoration(
+                                  color: Colors.green.shade50,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border:
+                                      Border.all(color: Colors.green.shade200)),
+                              child: Text('✓ Tersimpan',
+                                  style: TextStyle(
+                                      fontSize: 8,
+                                      color: Colors.green.shade700,
+                                      fontWeight: FontWeight.bold))),
+                      ]),
+                    ])),
+                Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                        color: bgColor, borderRadius: BorderRadius.circular(8)),
+                    child: Text(
+                        isLulus ? 'خريج' : _arabicPredikat(rapor.predikat),
+                        style: TextStyle(
+                            color: cardColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13))),
               ]),
-              const SizedBox(height: 4),
-              Row(children: [
-                Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(color: const Color(0xFFEEECFC), borderRadius: BorderRadius.circular(4)),
-                    child: Text(rapor.kelas, style: const TextStyle(fontSize: 9, color: _kPrimary, fontWeight: FontWeight.bold))),
-                const SizedBox(width: 6),
-                Text(rapor.tahunAjaran, style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
-                const SizedBox(width: 6),
-                if (!sudahSimpan)
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.orange.shade200)),
-                      child: Text('⟳ Belum disimpan', style: TextStyle(fontSize: 8, color: Colors.orange.shade700, fontWeight: FontWeight.bold)))
-                else
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.green.shade200)),
-                      child: Text('✓ Tersimpan', style: TextStyle(fontSize: 8, color: Colors.green.shade700, fontWeight: FontWeight.bold))),
+              const SizedBox(height: 12),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('Nilai Akhir',
+                      style:
+                          TextStyle(fontSize: 10, color: Colors.grey.shade500)),
+                  Text(rapor.nilaiRataRata.toStringAsFixed(1),
+                      style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: cardColor)),
+                  Text(RaporUtils.getPredikat(rapor.nilaiRataRata),
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: cardColor,
+                          fontWeight: FontWeight.w600)),
+                ]),
+                ElevatedButton.icon(
+                  onPressed: () => _showDetail(item),
+                  icon: const Icon(Icons.receipt_long_rounded, size: 15),
+                  label: const Text('Detail & Cetak',
+                      style:
+                          TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1B5E20),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 9),
+                      elevation: 0),
+                ),
               ]),
             ])),
-            Container(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(8)),
-                child: Text(isLulus ? 'خريج' : _arabicPredikat(rapor.predikat),
-                    style: TextStyle(color: cardColor, fontWeight: FontWeight.bold, fontSize: 13))),
-          ]),
-
-          const SizedBox(height: 12),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('Nilai Akhir', style: TextStyle(fontSize: 10, color: Colors.grey.shade500)),
-              Text(rapor.nilaiRataRata.toStringAsFixed(1), style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: cardColor)),
-              Text(_getPredikat(rapor.nilaiRataRata), style: TextStyle(fontSize: 10, color: cardColor, fontWeight: FontWeight.w600)),
-            ]),
-            ElevatedButton.icon(
-              onPressed: () => _showDetail(item),
-              icon: const Icon(Icons.receipt_long_rounded, size: 15),
-              label: const Text('Detail & Cetak', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1B5E20), foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-                elevation: 0),
-            ),
-          ]),
-        ])),
       ]),
     );
   }
@@ -672,40 +725,66 @@ class _RaporScreenState extends State<RaporScreen> {
     final rapor = item.rapor;
 
     showModalBottomSheet(
-      context: context, isScrollControlled: true, backgroundColor: Colors.white,
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
       builder: (ctx) => StatefulBuilder(
         builder: (_, setModal) => DraggableScrollableSheet(
-          initialChildSize: 0.85, maxChildSize: 0.95, minChildSize: 0.5,
+          initialChildSize: 0.85,
+          maxChildSize: 0.95,
+          minChildSize: 0.5,
           expand: false,
           builder: (_, scrollCtrl) => Column(children: [
-            Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Container(
-              width: 40, height: 4,
-              decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)))),
-
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 20), child: Row(children: [
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(rapor.namaSantri, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                Text('${rapor.kelas} · ${rapor.tahunAjaran}', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-              ])),
-              IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
-            ])),
+            Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(2)))),
+            Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(children: [
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Text(rapor.namaSantri,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 16)),
+                        Text('${rapor.kelas} · ${rapor.tahunAjaran}',
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.grey.shade600)),
+                      ])),
+                  IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(ctx)),
+                ])),
             const Divider(height: 1),
-
-            Expanded(child: ListView(
+            Expanded(
+                child: ListView(
               controller: scrollCtrl,
               padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
               children: [
                 _sectionLabel('Ringkasan Nilai'),
                 const SizedBox(height: 8),
                 Row(children: [
-                  Expanded(child: _nilaiBox('Nilai Akhir', rapor.nilaiRataRata.toStringAsFixed(1), _warnaPredikat(rapor.predikat))),
+                  Expanded(
+                      child: _nilaiBox(
+                          'Nilai Akhir',
+                          rapor.nilaiRataRata.toStringAsFixed(1),
+                          _warnaPredikat(rapor.predikat))),
                   const SizedBox(width: 8),
-                  Expanded(child: _nilaiBox('Predikat', rapor.predikat.split(' ').first, _warnaPredikat(rapor.predikat))),
+                  Expanded(
+                      child: _nilaiBox(
+                          'Predikat',
+                          rapor.predikat.split(' ').first,
+                          _warnaPredikat(rapor.predikat))),
                 ]),
                 const SizedBox(height: 24),
-
                 _sectionLabel('1. Nilai Akademik (UAS)'),
                 Container(
                   margin: const EdgeInsets.only(top: 8, bottom: 16),
@@ -716,16 +795,25 @@ class _RaporScreenState extends State<RaporScreen> {
                   ),
                   child: Column(
                     children: rapor.daftarNilai
-                        .where((n) => !n.mataPelajaran.toLowerCase().contains('lisan'))
+                        .where((n) =>
+                            !n.mataPelajaran.toLowerCase().contains('lisan'))
                         .map((n) => ListTile(
                               dense: true,
-                              title: Text(n.mataPelajaran, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                              trailing: Text('${n.nilaiHarian.toStringAsFixed(0)} (${n.grade})', 
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: _kPrimary)),
-                            )).toList(),
+                              title: Text(
+                                  RaporUtils.sanitizeText(n.mataPelajaran),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13)),
+                              trailing: Text(
+                                  '${n.nilaiHarian.toStringAsFixed(0)} (${n.grade})',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      color: _kPrimary)),
+                            ))
+                        .toList(),
                   ),
                 ),
-
                 _sectionLabel('2. Penilaian Sikap & Kehadiran'),
                 Container(
                   margin: const EdgeInsets.only(top: 8, bottom: 16),
@@ -735,17 +823,22 @@ class _RaporScreenState extends State<RaporScreen> {
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: Colors.blue.shade100),
                   ),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    _buildRowItem('Perilaku / Sikap', rapor.catatanAdab.isNotEmpty ? 'Tercatat' : 'Baik'),
-                    const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Divider(color: Colors.white)),
-                    _buildRowItem('Sakit', '${rapor.absenSakit} Hari'),
-                    const SizedBox(height: 6),
-                    _buildRowItem('Izin', '${rapor.absenIzin} Hari'),
-                    const SizedBox(height: 6),
-                    _buildRowItem('Tanpa Keterangan', '${rapor.absenAlpha} Hari'),
-                  ]),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildRowItem('Perilaku / Sikap',
+                            rapor.catatanAdab.isNotEmpty ? 'Tercatat' : 'Baik'),
+                        const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 4),
+                            child: Divider(color: Colors.white)),
+                        _buildRowItem('Sakit', '${rapor.absenSakit} Hari'),
+                        const SizedBox(height: 6),
+                        _buildRowItem('Izin', '${rapor.absenIzin} Hari'),
+                        const SizedBox(height: 6),
+                        _buildRowItem(
+                            'Tanpa Keterangan', '${rapor.absenAlpha} Hari'),
+                      ]),
                 ),
-
                 _sectionLabel('3. Nilai Hafalan Lisan'),
                 Container(
                   margin: const EdgeInsets.only(top: 8, bottom: 24),
@@ -756,24 +849,39 @@ class _RaporScreenState extends State<RaporScreen> {
                   ),
                   child: Column(
                     children: rapor.daftarNilai
-                        .where((n) => n.mataPelajaran.toLowerCase().contains('lisan'))
+                        .where((n) =>
+                            n.mataPelajaran.toLowerCase().contains('lisan'))
                         .map((n) => ListTile(
                               dense: true,
-                              title: Text(n.mataPelajaran, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                              trailing: Text('${n.nilaiHarian.toStringAsFixed(0)} (${n.grade})', 
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.green)),
-                            )).toList(),
+                              title: Text(
+                                  RaporUtils.sanitizeText(n.mataPelajaran),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13)),
+                              trailing: Text(
+                                  '${n.nilaiHarian.toStringAsFixed(0)} (${n.grade})',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      color: Colors.green)),
+                            ))
+                        .toList(),
                   ),
                 ),
               ],
             )),
-
             Container(
-              padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).padding.bottom + 16),
+              padding: EdgeInsets.fromLTRB(
+                  20, 12, 20, MediaQuery.of(context).padding.bottom + 16),
               decoration: BoxDecoration(
                 color: Colors.white,
                 border: Border(top: BorderSide(color: Colors.grey.shade200)),
-                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, -2))],
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.05),
+                      blurRadius: 4,
+                      offset: const Offset(0, -2))
+                ],
               ),
               child: SizedBox(
                 width: double.infinity,
@@ -787,12 +895,15 @@ class _RaporScreenState extends State<RaporScreen> {
                     await RaporService.cetakRaporPdfWithLogo(context, rapor);
                   },
                   icon: const Icon(Icons.print_rounded, size: 18),
-                  label: const Text('Cetak Rapor PDF', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                  label: const Text('Cetak Rapor PDF',
+                      style:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _kPrimary,
                     foregroundColor: Colors.white,
                     elevation: 0,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
                   ),
                 ),
               ),
@@ -804,7 +915,9 @@ class _RaporScreenState extends State<RaporScreen> {
   }
 
   Widget _sectionLabel(String title) {
-    return Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87));
+    return Text(title,
+        style: const TextStyle(
+            fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87));
   }
 
   Widget _nilaiBox(String label, String value, Color color) {
@@ -818,9 +931,15 @@ class _RaporScreenState extends State<RaporScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade700, fontWeight: FontWeight.w600)),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade700,
+                  fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
-          Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold, color: color)),
         ],
       ),
     );
@@ -830,8 +949,13 @@ class _RaporScreenState extends State<RaporScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(fontSize: 13, color: Colors.blue.shade900)),
-        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.blue.shade900)),
+        Text(label,
+            style: TextStyle(fontSize: 13, color: Colors.blue.shade900)),
+        Text(value,
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Colors.blue.shade900)),
       ],
     );
   }

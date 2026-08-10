@@ -2,6 +2,12 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+double _toDouble(dynamic value) {
+  if (value == null) return 0.0;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString()) ?? 0.0;
+}
+
 class NilaiModel {
   final String? id; // Menampung ID Dokumen jika diambil dari koleksi independen
   final String mataPelajaran;
@@ -19,7 +25,7 @@ class NilaiModel {
     return NilaiModel(
       id: documentId.isNotEmpty ? documentId : (map['id'] ?? ''),
       mataPelajaran: map['mataPelajaran'] ?? '',
-      nilaiHarian: (map['nilaiHarian'] ?? 0.0).toDouble(),
+      nilaiHarian: _toDouble(map['nilaiHarian'] ?? map['nilai_harian'] ?? 0.0),
       grade: map['grade'] ?? '',
     );
   }
@@ -109,8 +115,10 @@ class RaporModel {
     }
 
     // Penanganan Nilai Sikap & Kehadiran (Mendukung nama field Firebase yang bervariasi)
-    double nSikap = (map['nilaiSikap'] ?? map['nilai_perilaku'] ?? 0.0).toDouble();
-    double nHadir = (map['nilaiKehadiran'] ?? map['nilai_kehadiran'] ?? 0.0).toDouble();
+    double nSikap =
+        _toDouble(map['nilaiSikap'] ?? map['nilai_perilaku'] ?? 0.0);
+    double nHadir =
+        _toDouble(map['nilaiKehadiran'] ?? map['nilai_kehadiran'] ?? 0.0);
 
     return RaporModel(
       id: documentId,
@@ -132,7 +140,8 @@ class RaporModel {
       predikat: map['predikat'] ?? '',
       catatanWaliKelas: map['catatanWaliKelas'] ?? '',
       tanggalCetak: parsedDate,
-      nilaiRataRata: (map['nilaiRataRata'] ?? 0.0).toDouble(),
+      nilaiRataRata:
+          _toDouble(map['nilaiRataRata'] ?? map['nilai_akhir'] ?? 0.0),
       daftarNilai: parsedNilai,
     );
   }
@@ -156,7 +165,7 @@ class RaporModel {
       'predikatKehadiran': predikatKehadiran,
       'predikat': predikat,
       'catatanWaliKelas': catatanWaliKelas,
-      'tanggalCetak': Timestamp.fromDate(tanggalCetak), 
+      'tanggalCetak': Timestamp.fromDate(tanggalCetak),
       'daftarNilai': daftarNilai.map((x) => x.toMap()).toList(),
       'nilaiRataRata': nilaiRataRata,
     };
